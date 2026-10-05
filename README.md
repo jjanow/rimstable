@@ -4,7 +4,8 @@ Keeps a frozen, Steam-independent RimWorld install that only changes when you sa
 The Steam install (game + Workshop mods) becomes a test bed that updates freely; the
 stable copy is never touched by Steam.
 
-Python 3 stdlib, plus `rsync` and `restic` (>= 0.17).
+Python 3 stdlib, plus `rsync` and `restic` (>= 0.17). It is not installed on PATH; run it as
+`~/repos/rimstable/rimstable <command>`. With no arguments it prints help and the launch command.
 
 ## Layout
 
@@ -36,7 +37,8 @@ rimstable restore <id>        snapshot, then roll game/ and userdata/ back to <i
 rimstable prune [--keep 20]   forget old snapshots
 rimstable status
 rimstable launch [-- args]    run the stable copy
-rimstable install             "RimWorld (Stable)" desktop entry (not added to PATH)
+rimstable shortcut            put a "RimWorld (Stable)" launcher on ~/Desktop
+             [--path FILE]    write it somewhere else; --force overwrites
 ```
 
 Freeze and pull refuse to run while RimWorld is running or Steam is mid-update
@@ -44,7 +46,7 @@ Freeze and pull refuse to run while RimWorld is running or Steam is mid-update
 
 ## DLC workflow
 
-1. Play the stable copy ("RimWorld (Stable)"). Let Steam update the regular install.
+1. Play the stable copy (`rimstable launch`, or the desktop shortcut from `rimstable shortcut`). Let Steam update the regular install.
 2. Try the DLC in the Steam install. Run `rimstable diff` now and then to see how many
    of your mods support the new version.
 3. Once the Steam setup works for you, `rimstable freeze`. If it goes wrong,
