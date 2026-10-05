@@ -36,7 +36,7 @@ rimstable restore <id>        snapshot, then roll game/ and userdata/ back to <i
 rimstable prune [--keep 20]   forget old snapshots
 rimstable status
 rimstable launch [-- args]    run the stable copy
-rimstable install             ~/.local/bin/rimstable symlink + "RimWorld (Stable)" desktop entry
+rimstable install             "RimWorld (Stable)" desktop entry (not added to PATH)
 ```
 
 Freeze and pull refuse to run while RimWorld is running or Steam is mid-update

@@ -478,21 +478,11 @@ def cmd_launch(a):
 
 def cmd_install(a):
     script = Path(__file__).resolve()
-    bindir = HOME / ".local/bin"
-    bindir.mkdir(parents=True, exist_ok=True)
-    link = bindir / "rimstable"
-    if link.is_symlink() or not link.exists():
-        if link.is_symlink():
-            link.unlink()
-        link.symlink_to(script)
-        print(f"linked {link} -> {script}")
-    else:
-        print(f"{link} exists and is not a symlink; left alone")
     desktop = HOME / ".local/share/applications/rimworld-stable.desktop"
     desktop.write_text(
         "[Desktop Entry]\nType=Application\nName=RimWorld (Stable)\n"
         "Comment=Frozen RimWorld install managed by rimstable\n"
-        f"Exec={link} launch\nIcon=steam_icon_294100\nCategories=Game;\nTerminal=false\n")
+        f"Exec={script} launch\nIcon=steam_icon_294100\nCategories=Game;\nTerminal=false\n")
     print(f"wrote {desktop}")
 
 
@@ -535,7 +525,7 @@ def main():
     s.add_argument("args", nargs=argparse.REMAINDER)
     s.set_defaults(fn=cmd_launch)
 
-    sub.add_parser("install", help="symlink into ~/.local/bin and add a desktop entry").set_defaults(fn=cmd_install)
+    sub.add_parser("install", help="add a \"RimWorld (Stable)\" desktop entry").set_defaults(fn=cmd_install)
 
     sys.stdout.reconfigure(line_buffering=True)
     a = p.parse_args()
