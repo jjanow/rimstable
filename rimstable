@@ -11,26 +11,86 @@ The stable install lives under RIMSTABLE_ROOT (default ~/Games/RimWorld-stable):
     .rimstable     marker file; nothing is ever deleted outside a root that carries it
 """
 import argparse
+import csv
 import datetime as dt
 import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
+WINDOWS = os.name == "nt"
 HOME = Path.home()
+APPID = "294100"
+CFG_REL = Path("Ludeon Studios/RimWorld by Ludeon Studios")
 FLATPAK = HOME / ".var/app/com.valvesoftware.Steam"
-STEAMAPPS = Path(os.environ.get("RIMSTABLE_STEAMAPPS", FLATPAK / ".local/share/Steam/steamapps"))
+
+
+def steam_roots():
+    """Candidate Steam install dirs for this platform, most likely first."""
+    if WINDOWS:
+        roots = []
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as k:
+                roots.append(Path(winreg.QueryValueEx(k, "SteamPath")[0]))
+        except OSError:
+            pass
+        for env in ("ProgramFiles(x86)", "ProgramFiles"):
+            if os.environ.get(env):
+                roots.append(Path(os.environ[env]) / "Steam")
+        return roots
+    return [FLATPAK / ".local/share/Steam", HOME / ".local/share/Steam", HOME / ".steam/steam"]
+
+
+def library_paths(vdf_text):
+    """Library folders listed in Steam's libraryfolders.vdf."""
+    return [Path(m.group(1).replace("\\\\", "\\")) for m in re.finditer(r'"path"\s+"([^"]+)"', vdf_text)]
+
+
+def find_steamapps():
+    """The steamapps dir of the Steam library that has RimWorld installed."""
+    seen, fallback = set(), None
+    for root in steam_roots():
+        try:
+            root = root.resolve()
+        except OSError:
+            continue
+        if root in seen or not (root / "steamapps").is_dir():
+            continue
+        seen.add(root)
+        fallback = fallback or root / "steamapps"
+        libs = [root]
+        vdf = root / "steamapps/libraryfolders.vdf"
+        if vdf.exists():
+            libs += library_paths(vdf.read_text(encoding="utf-8", errors="replace"))
+        for lib in libs:
+            if (lib / f"steamapps/appmanifest_{APPID}.acf").exists():
+                return lib / "steamapps"
+    return fallback or steam_roots()[0] / "steamapps"
+
+
+def find_config(steamapps):
+    """RimWorld's config dir for the Steam flavor that owns steamapps (flatpak Steam keeps its own)."""
+    if WINDOWS:
+        return Path(os.environ.get("USERPROFILE", HOME)) / "AppData/LocalLow" / CFG_REL
+    if FLATPAK.resolve() in Path(steamapps).resolve().parents:
+        return FLATPAK / ".config/unity3d" / CFG_REL
+    return Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "unity3d" / CFG_REL
+
+
+STEAMAPPS = Path(os.environ.get("RIMSTABLE_STEAMAPPS") or find_steamapps())
 GAME_SRC = STEAMAPPS / "common/RimWorld"
-WS_SRC = STEAMAPPS / "workshop/content/294100"
-WS_ACF = STEAMAPPS / "workshop/appworkshop_294100.acf"
-APP_ACF = STEAMAPPS / "appmanifest_294100.acf"
-CFG_SRC = Path(os.environ.get("RIMSTABLE_CONFIG_SRC",
-                              FLATPAK / ".config/unity3d/Ludeon Studios/RimWorld by Ludeon Studios"))
+WS_SRC = STEAMAPPS / f"workshop/content/{APPID}"
+WS_ACF = STEAMAPPS / f"workshop/appworkshop_{APPID}.acf"
+APP_ACF = STEAMAPPS / f"appmanifest_{APPID}.acf"
+CFG_SRC = Path(os.environ.get("RIMSTABLE_CONFIG_SRC") or find_config(STEAMAPPS))
+EXE_NAME = "RimWorldWin64.exe" if WINDOWS else "RimWorldLinux"
 
 ROOT = Path(os.environ.get("RIMSTABLE_ROOT", HOME / "Games/RimWorld-stable")).resolve()
 GAME = ROOT / "game"
@@ -50,6 +110,10 @@ def die(msg):
 
 def run(cmd, **kw):
     return subprocess.run(cmd, check=True, **kw)
+
+
+def read_text(p):
+    return Path(p).read_text(encoding="utf-8", errors="replace")
 
 
 # ---------- safety ----------
@@ -73,8 +137,18 @@ def assert_dest(p):
 
 
 def rimworld_pids():
-    r = subprocess.run(["pgrep", "-x", "RimWorldLinux"], capture_output=True, text=True)
+    if WINDOWS:
+        r = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {EXE_NAME}", "/FO", "CSV", "/NH"],
+                           capture_output=True, text=True, errors="replace",
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+        return tasklist_pids(r.stdout, EXE_NAME)
+    r = subprocess.run(["pgrep", "-x", EXE_NAME], capture_output=True, text=True)
     return r.stdout.split()
+
+
+def tasklist_pids(out, image):
+    """PIDs from `tasklist /FO CSV /NH` output (the no-match message is localized, so match the image name)."""
+    return [row[1] for row in csv.reader(out.splitlines()) if len(row) > 1 and row[0].lower() == image.lower()]
 
 
 def require_not_running():
@@ -85,11 +159,11 @@ def require_not_running():
 
 def require_steam_idle(force):
     busy = []
-    acf = APP_ACF.read_text() if APP_ACF.exists() else ""
+    acf = read_text(APP_ACF) if APP_ACF.exists() else ""
     m = re.search(r'"StateFlags"\s+"(\d+)"', acf)
     if m and m.group(1) != "4":
         busy.append(f"game StateFlags={m.group(1)} (4 = fully installed)")
-    ws = WS_ACF.read_text() if WS_ACF.exists() else ""
+    ws = read_text(WS_ACF) if WS_ACF.exists() else ""
     for key in ("NeedsUpdate", "NeedsDownload"):
         m = re.search(rf'"{key}"\s+"(\d+)"', ws)
         if m and m.group(1) != "0":
@@ -98,11 +172,75 @@ def require_steam_idle(force):
         die("Steam looks mid-update: " + "; ".join(busy) + " (wait, or pass --force)")
 
 
-def rsync_into(src, dst, delete=True, extra=()):
+def make_writable(p):
+    """Windows won't overwrite or delete read-only files (e.g. a mod's .git objects)."""
+    try:
+        st = os.lstat(p)
+        if not stat.S_ISLNK(st.st_mode) and not st.st_mode & stat.S_IWRITE:
+            os.chmod(p, st.st_mode | stat.S_IWRITE)
+    except FileNotFoundError:
+        pass
+
+
+def remove_path(p):
+    if os.path.isdir(p) and not os.path.islink(p):
+        def retry(fn, path, _):
+            make_writable(path)
+            fn(path)
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(p, onexc=retry)
+        else:
+            shutil.rmtree(p, onerror=retry)
+    else:
+        make_writable(p)
+        os.remove(p)
+
+
+def mirror(src, dst, delete=True, exclude=()):
+    """rsync -a [--delete] src/ dst/ in pure Python. `exclude` names top-level entries that are
+    neither copied nor deleted. Files whose size and mtime already match are skipped."""
+    src, dst = Path(src), Path(dst)
+    for dirpath, dirnames, filenames in os.walk(src):
+        rel = Path(dirpath).relative_to(src)
+        if rel == Path("."):
+            dirnames[:] = [d for d in dirnames if d not in exclude]
+            filenames = [f for f in filenames if f not in exclude]
+        out = dst / rel
+        if out.is_symlink() or (out.exists() and not out.is_dir()):
+            remove_path(out)
+        out.mkdir(exist_ok=True)
+        links = [d for d in dirnames if os.path.islink(os.path.join(dirpath, d))]
+        dirnames[:] = [d for d in dirnames if d not in links]
+        names = {os.path.normcase(n) for n in dirnames + filenames + links}  # NTFS is case-insensitive
+        for name in filenames + links:
+            s, d = os.path.join(dirpath, name), out / name
+            sst = os.lstat(s)
+            if os.path.islink(s):
+                if d.is_symlink() and os.readlink(d) == os.readlink(s):
+                    continue
+                if d.exists() or d.is_symlink():
+                    remove_path(d)
+                os.symlink(os.readlink(s), d)
+                continue
+            if d.is_dir() and not d.is_symlink():
+                remove_path(d)
+            elif d.exists() or d.is_symlink():
+                dst_st = os.lstat(d)
+                if (stat.S_ISREG(dst_st.st_mode) and dst_st.st_size == sst.st_size
+                        and int(dst_st.st_mtime) == int(sst.st_mtime)):
+                    continue
+                remove_path(d)
+            shutil.copy2(s, d)
+        if delete:
+            for e in os.listdir(out):
+                if os.path.normcase(e) not in names and not (rel == Path(".") and e in exclude):
+                    remove_path(out / e)
+
+
+def sync_into(src, dst, delete=True, exclude=()):
     assert_dest(dst)
     Path(dst).mkdir(parents=True, exist_ok=True)
-    cmd = ["rsync", "-a"] + (["--delete"] if delete else []) + list(extra) + [f"{src}/", f"{dst}/"]
-    run(cmd)
+    mirror(src, dst, delete, exclude)
 
 
 def remove_mod_dir(path):
@@ -110,7 +248,7 @@ def remove_mod_dir(path):
     assert_dest(path)
     if path.parent.resolve() != MODS.resolve():
         die(f"refusing to remove {path}: not directly under {MODS}")
-    shutil.rmtree(path)
+    remove_path(path)
 
 
 # ---------- reading game / mod metadata ----------
@@ -132,7 +270,7 @@ def read_about(moddir):
         name = (r.findtext("name") or "").strip()
         sv = [li.text.strip() for li in r.findall("supportedVersions/li") if li.text]
     except ET.ParseError:
-        t = f.read_text(errors="ignore")
+        t = read_text(f)
         m = re.search(r"<packageId>\s*(.*?)\s*</packageId>", t, re.I)
         pid = m.group(1) if m else ""
         m = re.search(r"<name>\s*(.*?)\s*</name>", t, re.I)
@@ -170,12 +308,12 @@ def workshop_times():
     if not WS_ACF.exists():
         return {}
     return {m.group(1): int(m.group(2)) for m in
-            re.finditer(r'"(\d+)"\s*\{\s*"size"\s*"\d+"\s*"timeupdated"\s*"(\d+)"', WS_ACF.read_text())}
+            re.finditer(r'"(\d+)"\s*\{\s*"size"\s*"\d+"\s*"timeupdated"\s*"(\d+)"', read_text(WS_ACF))}
 
 
 def game_info(gamedir, cfgdir=None):
-    info = {"version_txt": (Path(gamedir) / "Version.txt").read_text().strip()}
-    m = re.search(r'"buildid"\s+"(\d+)"', APP_ACF.read_text()) if APP_ACF.exists() else None
+    info = {"version_txt": read_text(Path(gamedir) / "Version.txt").strip()}
+    m = re.search(r'"buildid"\s+"(\d+)"', read_text(APP_ACF)) if APP_ACF.exists() else None
     info["buildid"] = m.group(1) if m else None
     if cfgdir:
         info["revision"] = read_modsconfig(cfgdir)["version"]
@@ -183,14 +321,14 @@ def game_info(gamedir, cfgdir=None):
 
 
 def fingerprint(d):
-    """Cheap tree fingerprint: relpath, size and mtime of every file (rsync -a preserves mtime)."""
+    """Cheap tree fingerprint: relpath, size and mtime of every file (copy2 preserves mtime)."""
     h = hashlib.sha1()
     for dirpath, dirnames, filenames in os.walk(d):
         dirnames.sort()
         for fn in sorted(filenames):
             p = os.path.join(dirpath, fn)
             st = os.lstat(p)
-            h.update(f"{os.path.relpath(p, d)}\0{st.st_size}\0{int(st.st_mtime)}\n".encode())
+            h.update(f"{os.path.relpath(p, d).replace(os.sep, '/')}\0{st.st_size}\0{int(st.st_mtime)}\n".encode())
     return h.hexdigest()
 
 
@@ -219,13 +357,13 @@ def resolve_active(active):
 def load_manifest():
     if not MANIFEST.exists():
         die(f"no stable install at {ROOT}; run 'rimstable freeze' first")
-    return json.loads(MANIFEST.read_text())
+    return json.loads(MANIFEST.read_text(encoding="utf-8"))
 
 
 def save_manifest(m):
     assert_dest(MANIFEST)
     tmp = MANIFEST.with_suffix(".tmp")
-    tmp.write_text(json.dumps(m, indent=1))
+    tmp.write_text(json.dumps(m, indent=1), encoding="utf-8")
     tmp.replace(MANIFEST)
 
 
@@ -244,11 +382,20 @@ def mod_record(mod, times):
 # ---------- snapshots (restic) ----------
 
 def restic(*args, capture=False):
+    """capture=True returns stdout as bytes."""
     env = dict(os.environ, RESTIC_REPOSITORY=str(REPO))
     cmd = ["restic", "--insecure-no-password", *args]
     if capture:
-        return subprocess.run(cmd, check=True, env=env, capture_output=True, text=True).stdout
+        return subprocess.run(cmd, check=True, env=env, capture_output=True).stdout
     return run(cmd, env=env)
+
+
+def snap_path(p, windows=WINDOWS):
+    """Where an absolute local path lives inside a restic snapshot; restic stores C:\\x\\y as /C/x/y."""
+    if not windows:
+        return str(p)
+    p = PureWindowsPath(p)
+    return "/".join(["", p.drive.rstrip(":"), *p.parts[1:]])
 
 
 def ensure_repo():
@@ -267,7 +414,7 @@ def snapshot(label):
 
 def snapshots():
     ensure_repo()
-    return json.loads(restic("snapshots", "--json", "--tag", "rimstable", capture=True) or "[]")
+    return json.loads(restic("snapshots", "--json", "--tag", "rimstable", capture=True) or b"[]")
 
 
 def label_of(s):
@@ -295,7 +442,7 @@ def cmd_freeze(a):
         snapshot("pre-refreeze")
 
     print(f"[game] {GAME_SRC} -> {GAME}")
-    rsync_into(GAME_SRC, GAME, extra=["--exclude=/steam_appid.txt", "--exclude=/Mods/"])
+    sync_into(GAME_SRC, GAME, exclude={"steam_appid.txt", "Mods"})
     MODS.mkdir(exist_ok=True)
 
     print(f"[mods] {len(mods)} mods -> {MODS}")
@@ -303,7 +450,7 @@ def cmd_freeze(a):
     for mod in mods:
         folder = Path(mod["dir"]).name
         keep.add(folder)
-        rsync_into(mod["dir"], MODS / folder)
+        sync_into(mod["dir"], MODS / folder)
     for d in MODS.iterdir():
         if d.is_dir() and d.name not in keep:
             print(f"[mods] removing no-longer-active {d.name}")
@@ -311,8 +458,7 @@ def cmd_freeze(a):
 
     if first or a.userdata:
         print(f"[userdata] {CFG_SRC} -> {USERDATA}" + (" (replacing, saves included)" if not first else ""))
-        rsync_into(CFG_SRC, USERDATA, delete=not first,
-                   extra=[f"--exclude=/{n}" for n in sorted(USERDATA_SKIP)])
+        sync_into(CFG_SRC, USERDATA, delete=not first, exclude=USERDATA_SKIP)
     else:
         # keep stable saves/settings; take Steam's load order and settings for mods new to stable
         assert_dest(USERDATA / "Config")
@@ -357,7 +503,7 @@ def cmd_pull(a):
     pid = hits[0]["packageId"]
     src = dict(ws[pid], packageId=pid)
     snapshot(f"pre-pull {src['name']}")
-    rsync_into(src["dir"], MODS / src["dir"].name)
+    sync_into(src["dir"], MODS / src["dir"].name)
     rec = mod_record(src, workshop_times())
     man["mods"] = [r for r in man["mods"] if r["packageId"] != pid] + [rec]
     save_manifest(man)
@@ -437,10 +583,11 @@ def cmd_restore(a):
     for sub in (GAME, USERDATA):
         assert_dest(sub)
         print(f"[restore] {sub}")
-        restic("restore", "-q", f"{s['id']}:{sub}", "--target", str(sub), "--delete", "--overwrite", "if-changed")
-    data = restic("dump", s["id"], str(MANIFEST), capture=True)
+        restic("restore", "-q", f"{s['id']}:{snap_path(sub)}", "--target", str(sub),
+               "--delete", "--overwrite", "if-changed")
+    data = restic("dump", s["id"], snap_path(MANIFEST), capture=True)
     assert_dest(MANIFEST)
-    MANIFEST.write_text(data)
+    MANIFEST.write_bytes(data)
     print(f"restored {s['short_id']} ({label_of(s)})")
 
 
@@ -472,22 +619,38 @@ def cmd_launch(a):
     log = USERDATA / "Player.log"
     if log.exists():
         log.replace(USERDATA / "Player-prev.log")
-    exe = GAME / "RimWorldLinux"
-    os.chdir(GAME)
-    env = dict(os.environ, LC_ALL="C")
+    exe = GAME / EXE_NAME
     extra = a.args[1:] if a.args[:1] == ["--"] else a.args
-    os.execve(str(exe), [str(exe), f"-savedatafolder={USERDATA}", "-logFile", str(log), *extra], env)
+    argv = [str(exe), f"-savedatafolder={USERDATA}", "-logFile", str(log), *extra]
+    if WINDOWS:
+        # os.exec* on Windows spawns a child and exits anyway; just start the game detached
+        subprocess.Popen(argv, cwd=GAME, creationflags=subprocess.DETACHED_PROCESS)
+        return
+    os.chdir(GAME)
+    os.execve(str(exe), argv, dict(os.environ, LC_ALL="C"))
+
+
+def self_cmd():
+    """argv that runs this script; on Windows the extensionless file needs the interpreter."""
+    script = Path(__file__).resolve()
+    return [sys.executable, str(script)] if WINDOWS else [str(script)]
 
 
 def launch_hint():
-    script = Path(__file__).resolve()
+    cmd = subprocess.list2cmdline(self_cmd()) if WINDOWS else str(self_cmd()[0])
     return (f"launch the stable copy with:\n"
-            f"  {script} launch\n"
+            f"  {cmd} launch\n"
             f"or create a desktop shortcut for it with:\n"
-            f"  {script} shortcut")
+            f"  {cmd} shortcut")
 
 
 def desktop_dir():
+    if WINDOWS:
+        # honours OneDrive / folder redirection, unlike %USERPROFILE%\Desktop
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", "[Environment]::GetFolderPath('Desktop')"],
+                           capture_output=True, text=True, errors="replace")
+        d = r.stdout.strip()
+        return Path(d) if d else HOME / "Desktop"
     try:
         d = subprocess.run(["xdg-user-dir", "DESKTOP"], capture_output=True, text=True).stdout.strip()
     except FileNotFoundError:
@@ -495,18 +658,45 @@ def desktop_dir():
     return Path(d) if d and d != str(HOME) else HOME / "Desktop"
 
 
+def ps_quote(s):
+    return "'" + str(s).replace("'", "''") + "'"
+
+
+def write_lnk(dest):
+    """Windows .lnk running the launch command without a console window (pythonw)."""
+    py = Path(sys.executable)
+    pyw = py.with_name("pythonw.exe")
+    target = pyw if pyw.exists() else py
+    args = subprocess.list2cmdline([str(Path(__file__).resolve()), "launch"])
+    script = "; ".join([
+        f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut({ps_quote(dest)})",
+        f"$s.TargetPath = {ps_quote(target)}",
+        f"$s.Arguments = {ps_quote(args)}",
+        f"$s.WorkingDirectory = {ps_quote(GAME)}",
+        f"$s.IconLocation = {ps_quote(GAME / EXE_NAME)}",
+        "$s.Description = 'Frozen RimWorld install managed by rimstable'",
+        "$s.Save()",
+    ])
+    run(["powershell", "-NoProfile", "-Command", script])
+
+
 def cmd_shortcut(a):
     load_manifest()
     script = Path(__file__).resolve()
-    dest = Path(a.path) if a.path else desktop_dir() / "RimWorld (Stable).desktop"
+    name = "RimWorld (Stable)" + (".lnk" if WINDOWS else ".desktop")
+    dest = Path(a.path) if a.path else desktop_dir() / name
     if dest.exists() and not a.force:
         die(f"{dest} already exists (pass --force to overwrite)")
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if WINDOWS:
+        write_lnk(dest.resolve())
+        print(f"wrote {dest}")
+        return
     dest.write_text(
         "[Desktop Entry]\nType=Application\nVersion=1.0\nName=RimWorld (Stable)\n"
         "Comment=Frozen RimWorld install managed by rimstable\n"
         f"Exec=\"{script}\" launch\nPath={GAME}\nIcon=steam_icon_294100\n"
-        "Categories=Game;\nTerminal=false\nStartupNotify=true\n")
+        "Categories=Game;\nTerminal=false\nStartupNotify=true\n", encoding="utf-8")
     dest.chmod(0o755)  # KDE/GNOME only run executable .desktop files without a trust prompt
     print(f"wrote {dest}")
 
@@ -552,11 +742,14 @@ def main():
     s.set_defaults(fn=cmd_launch)
 
     s = sub.add_parser("shortcut", help="put a 'RimWorld (Stable)' launcher on your desktop")
-    s.add_argument("--path", help="write the .desktop file here instead of ~/Desktop")
+    s.add_argument("--path", help="write the shortcut (.desktop, or .lnk on Windows) here instead of the Desktop")
     s.add_argument("--force", action="store_true", help="overwrite an existing shortcut")
     s.set_defaults(fn=cmd_shortcut)
 
-    sys.stdout.reconfigure(line_buffering=True)
+    if sys.stdout:  # None under pythonw (Windows shortcut)
+        sys.stdout.reconfigure(line_buffering=True, errors="replace")
+    if sys.stderr:
+        sys.stderr.reconfigure(errors="replace")
     if len(sys.argv) == 1:
         p.print_help()
         return
