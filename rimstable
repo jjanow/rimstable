@@ -592,6 +592,8 @@ def cmd_restore(a):
 
 
 def cmd_prune(a):
+    if a.keep < 1:
+        die("--keep must be at least 1")
     require_not_running()
     ensure_repo()
     restic("forget", "--tag", "rimstable", "--keep-last", str(a.keep), "--prune")
@@ -718,21 +720,25 @@ def main():
 
     s = sub.add_parser("pull", help="update one mod from Steam into the stable install (snapshots first)")
     s.add_argument("mod", help="packageId, Workshop id, or part of the name")
-    s.add_argument("--force", action="store_true")
+    s.add_argument("--force", action="store_true", help="ignore the Steam-is-updating check")
     s.set_defaults(fn=cmd_pull)
 
     s = sub.add_parser("snap", help="take a snapshot")
-    s.add_argument("-m", "--label")
+    s.add_argument("-m", "--label", help="snapshot label (default: manual)")
     s.set_defaults(fn=cmd_snap)
 
     sub.add_parser("list", help="list snapshots").set_defaults(fn=cmd_list)
 
     s = sub.add_parser("restore", help="roll the stable install back to a snapshot")
-    s.add_argument("id")
+    s.add_argument("id", help="snapshot id or unique prefix, from 'rimstable list'")
     s.set_defaults(fn=cmd_restore)
 
-    s = sub.add_parser("prune", help="forget old snapshots")
-    s.add_argument("--keep", type=int, default=20)
+    s = sub.add_parser("prune", help="delete all but the newest snapshots",
+                       description="Delete every snapshot except the newest N (by time, any label) and free "
+                                   "their disk space. Automatic pre-pull/pre-restore/pre-refreeze snapshots "
+                                   "count toward N. Cannot be undone; check 'rimstable list' first.")
+    s.add_argument("--keep", type=int, default=20, metavar="N",
+                   help="how many of the newest snapshots to keep (default: 20, minimum 1)")
     s.set_defaults(fn=cmd_prune)
 
     sub.add_parser("status", help="summary of the stable install").set_defaults(fn=cmd_status)

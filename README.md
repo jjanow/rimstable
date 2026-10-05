@@ -37,28 +37,116 @@ Override with `RIMSTABLE_STEAMAPPS` (the `steamapps` dir) and `RIMSTABLE_CONFIG_
 
 ## Commands
 
-```
-rimstable freeze [-m label]   first run: copy game, active mods, config+saves
-                              later runs: snapshot, update game+mods+ModsConfig.xml,
-                              add settings for new mods; stable saves are NOT touched
-             --userdata       also replace stable config+saves with Steam's
-rimstable diff                game build, mods updated on Steam since freeze,
-                              load-order differences, how many mods support the
-                              current Steam game version (e.g. 1.7)
-rimstable pull <mod>          snapshot, then update one mod (packageId, Workshop id, or name)
-rimstable snap [-m label]     snapshot
-rimstable list                list snapshots
-rimstable restore <id>        snapshot, then roll game/ and userdata/ back to <id>
-rimstable prune [--keep 20]   forget old snapshots
-rimstable status
-rimstable launch [-- args]    run the stable copy
-rimstable shortcut            put a "RimWorld (Stable)" launcher on the Desktop
-                              (.desktop on Linux, .lnk on Windows)
-             [--path FILE]    write it somewhere else; --force overwrites
-```
+Run with no arguments, or `-h` after any command (`rimstable prune -h`), for built-in help.
 
-Freeze and pull refuse to run while RimWorld is running or Steam is mid-update
-(`--force` overrides the Steam check).
+| command | what it does |
+|---|---|
+| `freeze` | build or refresh the stable copy from the Steam install |
+| `diff` | show what changed on Steam since the last freeze |
+| `pull <mod>` | update a single mod from Steam |
+| `snap` | take a snapshot |
+| `list` | list snapshots |
+| `restore <id>` | roll the stable copy back to a snapshot |
+| `prune` | delete all but the newest snapshots |
+| `status` | summary of the stable copy |
+| `launch` | run the stable copy |
+| `shortcut` | create a desktop launcher |
+
+### `freeze [--userdata] [--allow-missing] [--force] [-m LABEL]`
+
+The first run copies the game, every active Workshop mod, and your config and saves into the
+stable root. Later runs ("refreezes") take a snapshot, then bring the game and mods up to
+date with Steam, remove mods that are no longer active, and copy Steam's `ModsConfig.xml`
+(load order). They add settings files only for mods that are new to the stable copy.
+Stable saves and existing mod settings are left alone.
+
+| option | effect |
+|---|---|
+| `--userdata` | on a refreeze, replace all stable config **and saves** with Steam's (they're in the pre-refreeze snapshot if you need them back) |
+| `--allow-missing` | freeze even if some active mods aren't on disk (unsubscribed, still downloading). Without it, freeze stops and lists them |
+| `--force` | skip the "Steam is mid-update" check |
+| `-m`, `--label LABEL` | label for the snapshot taken after the freeze (default `first freeze` / `refreeze`) |
+
+### `diff`
+
+Read-only. Compares the stable copy with the Steam install and shows:
+
+- the game build, and whether it changed
+- mods updated on Steam since the freeze
+- mods that are no longer in the Workshop folder
+- differences in the active mod list
+- how many stable mods support the Steam game's version (e.g. 1.7)
+
+### `pull <mod> [--force]`
+
+Takes a snapshot, then copies one mod from the Workshop folder into the stable copy.
+`<mod>` can be an exact packageId or Workshop id, or part of the mod's name or packageId.
+It has to match exactly one mod, or pull lists the candidates and stops. Pull doesn't change the
+load order. If the mod isn't active in the stable copy, enable it in the in-game mod manager.
+`--force` skips the "Steam is mid-update" check.
+
+### `snap [-m LABEL]`
+
+Takes a snapshot of `game/`, `userdata/` and `manifest.json`. The label defaults to `manual`.
+
+### `list`
+
+Shows snapshots oldest first: short id, time, label.
+
+### `restore <id>`
+
+Takes a snapshot of the current state (`pre-restore <id>`), then rolls `game/`, `userdata/`
+and `manifest.json` back to snapshot `<id>`. Files that aren't in that snapshot are deleted.
+`<id>` is any unique prefix of an id from `rimstable list`. If the restore was a mistake,
+restore the `pre-restore` snapshot.
+
+### `prune [--keep N]`
+
+Deletes all snapshots except the newest `N` (default **20**), counted by time and ignoring
+labels. The data they used is then freed on disk. Prune never runs by itself;
+snapshots pile up until you run it.
+
+Snapshots are taken automatically, so they count toward `N`:
+
+| command | snapshot(s) taken |
+|---|---|
+| `freeze` (first run) | `first freeze` after copying |
+| `freeze` (refreeze) | `pre-refreeze` before, then `refreeze` (or your `-m` label) after |
+| `pull` | `pre-pull <mod name>` before |
+| `restore` | `pre-restore <id>` before |
+| `snap` | `manual` (or your `-m` label) |
+
+For example, with 25 snapshots, `rimstable prune --keep 5` deletes the oldest 20 and keeps
+the newest 5. The snapshot you care about can be pushed out by later automatic ones, so check
+`rimstable list` first. Prune can't be undone. `N` must be at least 1; `--keep 0` is refused and
+deletes nothing.
+
+### `status`
+
+Shows the stable root, freeze time, game version, mod count, snapshot count with the latest
+snapshot, and whether RimWorld is running.
+
+### `launch [-- ARGS]`
+
+Runs the stable copy with `-savedatafolder` pointing at `userdata/`. Anything after `--` is
+passed to RimWorld, e.g. `rimstable launch -- -popupwindow`. The previous `Player.log` is
+kept as `Player-prev.log`.
+
+### `shortcut [--path FILE] [--force]`
+
+Creates a "RimWorld (Stable)" launcher on the Desktop: a `.desktop` file on Linux, a `.lnk` on
+Windows.
+
+| option | effect |
+|---|---|
+| `--path FILE` | write the shortcut to `FILE` instead of the Desktop |
+| `--force` | overwrite an existing shortcut |
+
+### Safety checks
+
+`freeze`, `pull`, `restore`, `snap`, `prune` and `launch` won't run while RimWorld is running.
+`freeze` and `pull` also won't run while Steam is updating RimWorld or a mod; `--force` skips
+that check.
 
 ## DLC workflow
 
