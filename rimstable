@@ -1,0 +1,546 @@
+#!/usr/bin/env python3
+"""rimstable - keep a frozen, Steam-independent RimWorld install that only changes when you say so.
+
+The Steam install (game + Workshop mods) is treated as a read-only source / test bed.
+The stable install lives under RIMSTABLE_ROOT (default ~/Games/RimWorld-stable):
+
+    game/          full copy of the game, steam_appid.txt removed, active mods in game/Mods/<workshopId>/
+    userdata/      config + saves, used via -savedatafolder
+    manifest.json  what was frozen (game build, every mod's fingerprint)
+    snapshots/     restic repository of game/ + userdata/ + manifest.json
+    .rimstable     marker file; nothing is ever deleted outside a root that carries it
+"""
+import argparse
+import datetime as dt
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+HOME = Path.home()
+FLATPAK = HOME / ".var/app/com.valvesoftware.Steam"
+STEAMAPPS = Path(os.environ.get("RIMSTABLE_STEAMAPPS", FLATPAK / ".local/share/Steam/steamapps"))
+GAME_SRC = STEAMAPPS / "common/RimWorld"
+WS_SRC = STEAMAPPS / "workshop/content/294100"
+WS_ACF = STEAMAPPS / "workshop/appworkshop_294100.acf"
+APP_ACF = STEAMAPPS / "appmanifest_294100.acf"
+CFG_SRC = Path(os.environ.get("RIMSTABLE_CONFIG_SRC",
+                              FLATPAK / ".config/unity3d/Ludeon Studios/RimWorld by Ludeon Studios"))
+
+ROOT = Path(os.environ.get("RIMSTABLE_ROOT", HOME / "Games/RimWorld-stable")).resolve()
+GAME = ROOT / "game"
+MODS = GAME / "Mods"
+USERDATA = ROOT / "userdata"
+MANIFEST = ROOT / "manifest.json"
+REPO = ROOT / "snapshots"
+MARKER = ROOT / ".rimstable"
+
+USERDATA_SKIP = {"Player.log", "Player-prev.log", "steam_autocloud.vdf"}
+
+
+def die(msg):
+    print(f"rimstable: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def run(cmd, **kw):
+    return subprocess.run(cmd, check=True, **kw)
+
+
+# ---------- safety ----------
+
+def inside_root(p):
+    p = Path(p).resolve()
+    return p != ROOT and ROOT in p.parents
+
+
+def assert_dest(p):
+    """Every write/delete target must be inside a marked stable root."""
+    if not MARKER.is_file():
+        die(f"refusing to modify {p}: {MARKER} missing")
+    if not inside_root(p):
+        die(f"refusing to modify {p}: not inside {ROOT}")
+    for src in (GAME_SRC, WS_SRC, CFG_SRC):
+        s = src.resolve()
+        rp = Path(p).resolve()
+        if rp == s or s in rp.parents or rp in s.parents:
+            die(f"refusing to modify {p}: overlaps Steam source {src}")
+
+
+def rimworld_pids():
+    r = subprocess.run(["pgrep", "-x", "RimWorldLinux"], capture_output=True, text=True)
+    return r.stdout.split()
+
+
+def require_not_running():
+    pids = rimworld_pids()
+    if pids:
+        die(f"RimWorld is running (pid {' '.join(pids)}); quit it first")
+
+
+def require_steam_idle(force):
+    busy = []
+    acf = APP_ACF.read_text() if APP_ACF.exists() else ""
+    m = re.search(r'"StateFlags"\s+"(\d+)"', acf)
+    if m and m.group(1) != "4":
+        busy.append(f"game StateFlags={m.group(1)} (4 = fully installed)")
+    ws = WS_ACF.read_text() if WS_ACF.exists() else ""
+    for key in ("NeedsUpdate", "NeedsDownload"):
+        m = re.search(rf'"{key}"\s+"(\d+)"', ws)
+        if m and m.group(1) != "0":
+            busy.append(f"workshop {key}={m.group(1)}")
+    if busy and not force:
+        die("Steam looks mid-update: " + "; ".join(busy) + " (wait, or pass --force)")
+
+
+def rsync_into(src, dst, delete=True, extra=()):
+    assert_dest(dst)
+    Path(dst).mkdir(parents=True, exist_ok=True)
+    cmd = ["rsync", "-a"] + (["--delete"] if delete else []) + list(extra) + [f"{src}/", f"{dst}/"]
+    run(cmd)
+
+
+def remove_mod_dir(path):
+    path = Path(path)
+    assert_dest(path)
+    if path.parent.resolve() != MODS.resolve():
+        die(f"refusing to remove {path}: not directly under {MODS}")
+    shutil.rmtree(path)
+
+
+# ---------- reading game / mod metadata ----------
+
+def find_about(moddir):
+    about = next((p for p in Path(moddir).iterdir() if p.is_dir() and p.name.lower() == "about"), None)
+    if not about:
+        return None
+    return next((p for p in about.iterdir() if p.name.lower() == "about.xml"), None)
+
+
+def read_about(moddir):
+    f = find_about(moddir)
+    if not f:
+        return None
+    try:
+        r = ET.parse(f).getroot()
+        pid = (r.findtext("packageId") or "").strip()
+        name = (r.findtext("name") or "").strip()
+        sv = [li.text.strip() for li in r.findall("supportedVersions/li") if li.text]
+    except ET.ParseError:
+        t = f.read_text(errors="ignore")
+        m = re.search(r"<packageId>\s*(.*?)\s*</packageId>", t, re.I)
+        pid = m.group(1) if m else ""
+        m = re.search(r"<name>\s*(.*?)\s*</name>", t, re.I)
+        name = m.group(1) if m else ""
+        sv = re.findall(r"<li>\s*(\d+\.\d+)\s*</li>", t)
+    if not pid:
+        return None
+    return {"packageId": pid.lower(), "name": name, "supportedVersions": sv}
+
+
+def index_mods(root):
+    """packageId -> {dir, name, supportedVersions} for every mod folder under root."""
+    out = {}
+    if not root.is_dir():
+        return out
+    for d in sorted(root.iterdir()):
+        if not d.is_dir():
+            continue
+        a = read_about(d)
+        if a:
+            out.setdefault(a["packageId"], dict(a, dir=d))
+    return out
+
+
+def read_modsconfig(cfgdir):
+    r = ET.parse(Path(cfgdir) / "Config/ModsConfig.xml").getroot()
+    return {
+        "version": (r.findtext("version") or "").strip(),
+        "active": [li.text.strip().lower() for li in r.find("activeMods") if li.text],
+    }
+
+
+def workshop_times():
+    """workshopId -> timeupdated (epoch) from Steam's workshop manifest."""
+    if not WS_ACF.exists():
+        return {}
+    return {m.group(1): int(m.group(2)) for m in
+            re.finditer(r'"(\d+)"\s*\{\s*"size"\s*"\d+"\s*"timeupdated"\s*"(\d+)"', WS_ACF.read_text())}
+
+
+def game_info(gamedir, cfgdir=None):
+    info = {"version_txt": (Path(gamedir) / "Version.txt").read_text().strip()}
+    m = re.search(r'"buildid"\s+"(\d+)"', APP_ACF.read_text()) if APP_ACF.exists() else None
+    info["buildid"] = m.group(1) if m else None
+    if cfgdir:
+        info["revision"] = read_modsconfig(cfgdir)["version"]
+    return info
+
+
+def fingerprint(d):
+    """Cheap tree fingerprint: relpath, size and mtime of every file (rsync -a preserves mtime)."""
+    h = hashlib.sha1()
+    for dirpath, dirnames, filenames in os.walk(d):
+        dirnames.sort()
+        for fn in sorted(filenames):
+            p = os.path.join(dirpath, fn)
+            st = os.lstat(p)
+            h.update(f"{os.path.relpath(p, d)}\0{st.st_size}\0{int(st.st_mtime)}\n".encode())
+    return h.hexdigest()
+
+
+def major_minor(v):
+    m = re.match(r"(\d+\.\d+)", v or "")
+    return m.group(1) if m else None
+
+
+def resolve_active(active):
+    """Map Steam's active list to sources. Returns (mods, missing); DLC/core come with the game."""
+    ws = index_mods(WS_SRC)
+    data = index_mods(GAME_SRC / "Data")
+    local = index_mods(GAME_SRC / "Mods")
+    mods, missing = [], []
+    for pid in active:
+        if pid in data:
+            continue
+        src = ws.get(pid) or local.get(pid)
+        if not src:
+            missing.append(pid)
+            continue
+        mods.append(dict(src, packageId=pid))
+    return mods, missing
+
+
+def load_manifest():
+    if not MANIFEST.exists():
+        die(f"no stable install at {ROOT}; run 'rimstable freeze' first")
+    return json.loads(MANIFEST.read_text())
+
+
+def save_manifest(m):
+    assert_dest(MANIFEST)
+    tmp = MANIFEST.with_suffix(".tmp")
+    tmp.write_text(json.dumps(m, indent=1))
+    tmp.replace(MANIFEST)
+
+
+def mod_record(mod, times):
+    d = Path(mod["dir"])
+    return {
+        "packageId": mod["packageId"],
+        "folder": d.name,
+        "name": mod["name"],
+        "supportedVersions": mod["supportedVersions"],
+        "timeupdated": times.get(d.name),
+        "fingerprint": fingerprint(d),
+    }
+
+
+# ---------- snapshots (restic) ----------
+
+def restic(*args, capture=False):
+    env = dict(os.environ, RESTIC_REPOSITORY=str(REPO))
+    cmd = ["restic", "--insecure-no-password", *args]
+    if capture:
+        return subprocess.run(cmd, check=True, env=env, capture_output=True, text=True).stdout
+    return run(cmd, env=env)
+
+
+def ensure_repo():
+    if not (REPO / "config").exists():
+        assert_dest(REPO)
+        restic("init")
+
+
+def snapshot(label):
+    ensure_repo()
+    label = re.sub(r"[,\n]", " ", label).strip() or "manual"
+    print(f"[snapshot] {label}")
+    restic("backup", "-q", "--tag", "rimstable", "--tag", f"label={label}",
+           str(GAME), str(USERDATA), str(MANIFEST))
+
+
+def snapshots():
+    ensure_repo()
+    return json.loads(restic("snapshots", "--json", "--tag", "rimstable", capture=True) or "[]")
+
+
+def label_of(s):
+    return next((t[6:] for t in s.get("tags", []) if t.startswith("label=")), "")
+
+
+# ---------- commands ----------
+
+def cmd_freeze(a):
+    require_not_running()
+    require_steam_idle(a.force)
+    first = not MANIFEST.exists()
+    if first and ROOT.exists() and any(ROOT.iterdir()) and not MARKER.exists():
+        die(f"{ROOT} exists, is not empty and has no {MARKER.name} marker; refusing to use it")
+
+    cfg = read_modsconfig(CFG_SRC)
+    mods, missing = resolve_active(cfg["active"])
+    if missing and not a.allow_missing:
+        die("active mods not found on disk (unsubscribed? still downloading?):\n  "
+            + "\n  ".join(missing) + "\npass --allow-missing to freeze without them")
+
+    ROOT.mkdir(parents=True, exist_ok=True)
+    MARKER.touch()
+    if not first:
+        snapshot("pre-refreeze")
+
+    print(f"[game] {GAME_SRC} -> {GAME}")
+    rsync_into(GAME_SRC, GAME, extra=["--exclude=/steam_appid.txt", "--exclude=/Mods/"])
+    MODS.mkdir(exist_ok=True)
+
+    print(f"[mods] {len(mods)} mods -> {MODS}")
+    keep = set()
+    for mod in mods:
+        folder = Path(mod["dir"]).name
+        keep.add(folder)
+        rsync_into(mod["dir"], MODS / folder)
+    for d in MODS.iterdir():
+        if d.is_dir() and d.name not in keep:
+            print(f"[mods] removing no-longer-active {d.name}")
+            remove_mod_dir(d)
+
+    if first or a.userdata:
+        print(f"[userdata] {CFG_SRC} -> {USERDATA}" + (" (replacing, saves included)" if not first else ""))
+        rsync_into(CFG_SRC, USERDATA, delete=not first,
+                   extra=[f"--exclude=/{n}" for n in sorted(USERDATA_SKIP)])
+    else:
+        # keep stable saves/settings; take Steam's load order and settings for mods new to stable
+        assert_dest(USERDATA / "Config")
+        shutil.copy2(CFG_SRC / "Config/ModsConfig.xml", USERDATA / "Config/ModsConfig.xml")
+        added = 0
+        for f in (CFG_SRC / "Config").glob("Mod_*.xml"):
+            if not (USERDATA / "Config" / f.name).exists():
+                shutil.copy2(f, USERDATA / "Config" / f.name)
+                added += 1
+        print(f"[userdata] ModsConfig.xml updated, {added} new mod settings files; saves untouched")
+
+    times = workshop_times()
+    save_manifest({
+        "frozen_at": dt.datetime.now().isoformat(timespec="seconds"),
+        "game": game_info(GAME_SRC, CFG_SRC),
+        "active": cfg["active"],
+        "mods": [mod_record(m, times) for m in mods],
+    })
+    snapshot(a.label or ("first freeze" if first else "refreeze"))
+    print(f"frozen: {len(mods)} mods, game {game_info(GAME_SRC, CFG_SRC)['revision']}")
+
+
+def find_mod(query, records):
+    q = query.lower()
+    exact = [r for r in records if q in (r["packageId"], r["folder"])]
+    if exact:
+        return exact
+    return [r for r in records if q in r["name"].lower() or q in r["packageId"]]
+
+
+def cmd_pull(a):
+    require_not_running()
+    require_steam_idle(a.force)
+    man = load_manifest()
+    ws = index_mods(WS_SRC)
+    candidates = [{"packageId": pid, "folder": m["dir"].name, "name": m["name"]} for pid, m in ws.items()]
+    hits = find_mod(a.mod, candidates)
+    if len(hits) != 1:
+        die(f"'{a.mod}' matches {len(hits)} Workshop mods" +
+            ("".join(f"\n  {h['folder']}  {h['packageId']}  {h['name']}" for h in hits[:20])))
+    pid = hits[0]["packageId"]
+    src = dict(ws[pid], packageId=pid)
+    snapshot(f"pre-pull {src['name']}")
+    rsync_into(src["dir"], MODS / src["dir"].name)
+    rec = mod_record(src, workshop_times())
+    man["mods"] = [r for r in man["mods"] if r["packageId"] != pid] + [rec]
+    save_manifest(man)
+    print(f"pulled {src['name']} ({pid})")
+    active = read_modsconfig(USERDATA)["active"]
+    if pid not in active:
+        print("note: this mod is not active in the stable install; enable it in the in-game mod manager")
+
+
+def cmd_diff(a):
+    man = load_manifest()
+    steam_game = game_info(GAME_SRC, CFG_SRC)
+    print(f"game   stable {man['game']['revision']} build {man['game']['buildid']}"
+          f"   steam {steam_game['revision']} build {steam_game['buildid']}"
+          + ("   (same)" if man["game"]["buildid"] == steam_game["buildid"] else "   ** CHANGED **"))
+    target = major_minor(steam_game["version_txt"])
+    ws = index_mods(WS_SRC)
+    times = workshop_times()
+
+    changed, gone, ready = [], [], 0
+    for r in man["mods"]:
+        cur = ws.get(r["packageId"])
+        if not cur:
+            gone.append(r)
+            continue
+        if target in cur["supportedVersions"]:
+            ready += 1
+        if fingerprint(cur["dir"]) != r["fingerprint"]:
+            changed.append((r, cur))
+
+    def when(folder):
+        t = times.get(folder)
+        return dt.datetime.fromtimestamp(t).strftime("%Y-%m-%d") if t else "?"
+
+    print(f"\nmods updated on Steam since freeze: {len(changed)}")
+    for r, cur in sorted(changed, key=lambda x: x[0]["name"].lower()):
+        print(f"  {r['folder']:>11}  {when(r['folder'])}  [{','.join(cur['supportedVersions'])}]  {r['name']}")
+    if gone:
+        print(f"\nmods no longer in the Workshop folder (unsubscribed/removed): {len(gone)}")
+        for r in gone:
+            print(f"  {r['folder']:>11}  {r['name']}")
+
+    steam_active = read_modsconfig(CFG_SRC)["active"]
+    stable_active = read_modsconfig(USERDATA)["active"]
+    added = [p for p in steam_active if p not in stable_active]
+    removed = [p for p in stable_active if p not in steam_active]
+    if added or removed:
+        print("\nload-order differences (Steam test bed vs stable):")
+        for p in added:
+            print(f"  + {p}  (active in Steam only)")
+        for p in removed:
+            print(f"  - {p}  (active in stable only)")
+    print(f"\n{ready}/{len(man['mods'])} stable mods list support for {target} in their current Steam version")
+
+
+def cmd_snap(a):
+    load_manifest()
+    require_not_running()
+    snapshot(a.label or "manual")
+
+
+def cmd_list(a):
+    for s in snapshots():
+        t = s["time"][:19].replace("T", " ")
+        print(f"{s['short_id']}  {t}  {label_of(s)}")
+
+
+def cmd_restore(a):
+    require_not_running()
+    load_manifest()
+    ids = {s["short_id"]: s for s in snapshots()}
+    match = [s for sid, s in ids.items() if sid.startswith(a.id) or s["id"].startswith(a.id)]
+    if len(match) != 1:
+        die(f"snapshot '{a.id}' not found (see 'rimstable list')")
+    s = match[0]
+    snapshot(f"pre-restore {s['short_id']}")
+    for sub in (GAME, USERDATA):
+        assert_dest(sub)
+        print(f"[restore] {sub}")
+        restic("restore", "-q", f"{s['id']}:{sub}", "--target", str(sub), "--delete", "--overwrite", "if-changed")
+    data = restic("dump", s["id"], str(MANIFEST), capture=True)
+    assert_dest(MANIFEST)
+    MANIFEST.write_text(data)
+    print(f"restored {s['short_id']} ({label_of(s)})")
+
+
+def cmd_prune(a):
+    require_not_running()
+    ensure_repo()
+    restic("forget", "--tag", "rimstable", "--keep-last", str(a.keep), "--prune")
+
+
+def cmd_status(a):
+    man = load_manifest()
+    g = man["game"]
+    print(f"root     {ROOT}")
+    print(f"frozen   {man['frozen_at']}")
+    print(f"game     {g['revision'] or g['version_txt']} (Steam build {g['buildid']})")
+    print(f"mods     {len(man['mods'])} + core/DLC, {len(man['active'])} active at freeze")
+    snaps = snapshots()
+    if snaps:
+        print(f"snaps    {len(snaps)}, latest {snaps[-1]['short_id']} {label_of(snaps[-1])}")
+    pids = rimworld_pids()
+    print(f"running  {'yes (pid ' + ' '.join(pids) + ')' if pids else 'no'}")
+
+
+def cmd_launch(a):
+    load_manifest()
+    require_not_running()
+    log = USERDATA / "Player.log"
+    if log.exists():
+        log.replace(USERDATA / "Player-prev.log")
+    exe = GAME / "RimWorldLinux"
+    os.chdir(GAME)
+    env = dict(os.environ, LC_ALL="C")
+    extra = a.args[1:] if a.args[:1] == ["--"] else a.args
+    os.execve(str(exe), [str(exe), f"-savedatafolder={USERDATA}", "-logFile", str(log), *extra], env)
+
+
+def cmd_install(a):
+    script = Path(__file__).resolve()
+    bindir = HOME / ".local/bin"
+    bindir.mkdir(parents=True, exist_ok=True)
+    link = bindir / "rimstable"
+    if link.is_symlink() or not link.exists():
+        if link.is_symlink():
+            link.unlink()
+        link.symlink_to(script)
+        print(f"linked {link} -> {script}")
+    else:
+        print(f"{link} exists and is not a symlink; left alone")
+    desktop = HOME / ".local/share/applications/rimworld-stable.desktop"
+    desktop.write_text(
+        "[Desktop Entry]\nType=Application\nName=RimWorld (Stable)\n"
+        "Comment=Frozen RimWorld install managed by rimstable\n"
+        f"Exec={link} launch\nIcon=steam_icon_294100\nCategories=Game;\nTerminal=false\n")
+    print(f"wrote {desktop}")
+
+
+def main():
+    p = argparse.ArgumentParser(prog="rimstable", description=__doc__.splitlines()[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("freeze", help="build/refresh the stable install from the Steam install")
+    s.add_argument("--userdata", action="store_true", help="on refreeze, also replace config AND saves from Steam")
+    s.add_argument("--allow-missing", action="store_true", help="freeze even if some active mods are not on disk")
+    s.add_argument("--force", action="store_true", help="ignore the Steam-is-updating check")
+    s.add_argument("-m", "--label", help="snapshot label")
+    s.set_defaults(fn=cmd_freeze)
+
+    s = sub.add_parser("diff", help="what changed on Steam since the freeze")
+    s.set_defaults(fn=cmd_diff)
+
+    s = sub.add_parser("pull", help="update one mod from Steam into the stable install (snapshots first)")
+    s.add_argument("mod", help="packageId, Workshop id, or part of the name")
+    s.add_argument("--force", action="store_true")
+    s.set_defaults(fn=cmd_pull)
+
+    s = sub.add_parser("snap", help="take a snapshot")
+    s.add_argument("-m", "--label")
+    s.set_defaults(fn=cmd_snap)
+
+    sub.add_parser("list", help="list snapshots").set_defaults(fn=cmd_list)
+
+    s = sub.add_parser("restore", help="roll the stable install back to a snapshot")
+    s.add_argument("id")
+    s.set_defaults(fn=cmd_restore)
+
+    s = sub.add_parser("prune", help="forget old snapshots")
+    s.add_argument("--keep", type=int, default=20)
+    s.set_defaults(fn=cmd_prune)
+
+    sub.add_parser("status", help="summary of the stable install").set_defaults(fn=cmd_status)
+
+    s = sub.add_parser("launch", help="run the stable install")
+    s.add_argument("args", nargs=argparse.REMAINDER)
+    s.set_defaults(fn=cmd_launch)
+
+    sub.add_parser("install", help="symlink into ~/.local/bin and add a desktop entry").set_defaults(fn=cmd_install)
+
+    sys.stdout.reconfigure(line_buffering=True)
+    a = p.parse_args()
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()
