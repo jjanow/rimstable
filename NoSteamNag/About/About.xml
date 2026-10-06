@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModMetaData>
+  <name>rimstable: No Steam Nag</name>
+  <author>rimstable</author>
+  <packageId>rimstable.nosteamnag</packageId>
+  <supportedVersions>
+    <li>1.6</li>
+  </supportedVersions>
+  <description>Closes the "Could not initialize Steam API" dialog. The rimstable copy runs without steam_appid.txt on purpose, so Steam never loads Workshop mods into it. Installed and activated by `rimstable launch`.</description>
+  <modDependencies>
+    <li>
+      <packageId>brrainz.harmony</packageId>
+      <displayName>Harmony</displayName>
+      <steamWorkshopUrl>steam://url/CommunityFilePage/2009463077</steamWorkshopUrl>
+    </li>
+  </modDependencies>
+  <loadAfter>
+    <li>brrainz.harmony</li>
+  </loadAfter>
+</ModMetaData>

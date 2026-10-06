@@ -100,7 +100,12 @@ MANIFEST = ROOT / "manifest.json"
 REPO = ROOT / "snapshots"
 MARKER = ROOT / ".rimstable"
 
-USERDATA_SKIP = {"Player.log", "Player-prev.log", "steam_autocloud.vdf"}
+# MissileGirl/Cache is Gagarin's XML cache; Steam's copy hashes Steam paths and would force a rebuild
+USERDATA_SKIP = {"Player.log", "Player-prev.log", "steam_autocloud.vdf", "MissileGirl/Cache"}
+# helper mod that closes the "Could not initialize Steam API" dialog (no steam_appid.txt on purpose)
+HELPER_SRC = Path(__file__).resolve().parent / "NoSteamNag"
+HELPER_ID = "rimstable.nosteamnag"
+HELPER_FOLDER = "rimstable_nosteamnag"
 
 
 def die(msg):
@@ -114,6 +119,28 @@ def run(cmd, **kw):
 
 def read_text(p):
     return Path(p).read_text(encoding="utf-8", errors="replace")
+
+
+def install_helper():
+    """Copy the NoSteamNag mod into the stable Mods folder and activate it right after Harmony."""
+    if not (HELPER_SRC / "Assemblies/RimstableNoSteamNag.dll").exists():
+        print(f"[helper] {HELPER_SRC} not built; the Steam API dialog will still appear", file=sys.stderr)
+        return
+    sync_into(HELPER_SRC, MODS / HELPER_FOLDER, exclude={"Source"})
+    cfg = USERDATA / "Config/ModsConfig.xml"
+    if HELPER_ID in read_modsconfig(USERDATA)["active"]:
+        return
+    raw = cfg.read_bytes()
+    bom = raw.startswith(b"\xef\xbb\xbf")
+    text = raw.decode("utf-8-sig")
+    m = re.search(r"^([ \t]*)<li>brrainz\.harmony</li>[ \t]*\r?\n", text, re.M | re.I)
+    if not m:
+        print("[helper] Harmony is not active; not activating the Steam API dialog helper", file=sys.stderr)
+        return
+    assert_dest(cfg)
+    text = text[:m.end()] + f"{m.group(1)}<li>{HELPER_ID}</li>\n" + text[m.end():]
+    cfg.write_bytes((b"\xef\xbb\xbf" if bom else b"") + text.encode("utf-8"))
+    print(f"[helper] activated {HELPER_ID}")
 
 
 # ---------- safety ----------
@@ -197,14 +224,14 @@ def remove_path(p):
 
 
 def mirror(src, dst, delete=True, exclude=()):
-    """rsync -a [--delete] src/ dst/ in pure Python. `exclude` names top-level entries that are
-    neither copied nor deleted. Files whose size and mtime already match are skipped."""
+    """rsync -a [--delete] src/ dst/ in pure Python. `exclude` holds src-relative posix paths
+    ("Player.log", "MissileGirl/Cache") that are neither copied nor deleted. Files whose size
+    and mtime already match are skipped."""
     src, dst = Path(src), Path(dst)
     for dirpath, dirnames, filenames in os.walk(src):
         rel = Path(dirpath).relative_to(src)
-        if rel == Path("."):
-            dirnames[:] = [d for d in dirnames if d not in exclude]
-            filenames = [f for f in filenames if f not in exclude]
+        dirnames[:] = [d for d in dirnames if (rel / d).as_posix() not in exclude]
+        filenames = [f for f in filenames if (rel / f).as_posix() not in exclude]
         out = dst / rel
         if out.is_symlink() or (out.exists() and not out.is_dir()):
             remove_path(out)
@@ -233,7 +260,7 @@ def mirror(src, dst, delete=True, exclude=()):
             shutil.copy2(s, d)
         if delete:
             for e in os.listdir(out):
-                if os.path.normcase(e) not in names and not (rel == Path(".") and e in exclude):
+                if os.path.normcase(e) not in names and (rel / e).as_posix() not in exclude:
                     remove_path(out / e)
 
 
@@ -446,7 +473,7 @@ def cmd_freeze(a):
     MODS.mkdir(exist_ok=True)
 
     print(f"[mods] {len(mods)} mods -> {MODS}")
-    keep = set()
+    keep = {HELPER_FOLDER}
     for mod in mods:
         folder = Path(mod["dir"]).name
         keep.add(folder)
@@ -470,6 +497,7 @@ def cmd_freeze(a):
                 added += 1
         print(f"[userdata] ModsConfig.xml updated, {added} new mod settings files; saves untouched")
 
+    install_helper()
     times = workshop_times()
     save_manifest({
         "frozen_at": dt.datetime.now().isoformat(timespec="seconds"),
@@ -549,7 +577,7 @@ def cmd_diff(a):
     steam_active = read_modsconfig(CFG_SRC)["active"]
     stable_active = read_modsconfig(USERDATA)["active"]
     added = [p for p in steam_active if p not in stable_active]
-    removed = [p for p in stable_active if p not in steam_active]
+    removed = [p for p in stable_active if p not in steam_active and p != HELPER_ID]
     if added or removed:
         print("\nload-order differences (Steam test bed vs stable):")
         for p in added:
@@ -618,6 +646,7 @@ def cmd_status(a):
 def cmd_launch(a):
     load_manifest()
     require_not_running()
+    install_helper()
     log = USERDATA / "Player.log"
     if log.exists():
         log.replace(USERDATA / "Player-prev.log")

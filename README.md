@@ -30,6 +30,7 @@ Override with `RIMSTABLE_STEAMAPPS` (the `steamapps` dir) and `RIMSTABLE_CONFIG_
 |---|---|
 | `game/` | copy of the Steam game dir, `steam_appid.txt` removed |
 | `game/Mods/<workshopId>/` | every active Workshop mod. Folder names stay the Workshop id so `Mod_<id>_*.xml` settings still match |
+| `game/Mods/rimstable_nosteamnag/` | the bundled helper mod that closes the Steam API dialog (see Notes) |
 | `userdata/` | config and saves, passed via `-savedatafolder` |
 | `manifest.json` | game build and a fingerprint per mod at freeze time |
 | `snapshots/` | restic repo (no password) of `game/`, `userdata/` and `manifest.json` |
@@ -58,7 +59,8 @@ The first run copies the game, every active Workshop mod, and your config and sa
 stable root. Later runs ("refreezes") take a snapshot, then bring the game and mods up to
 date with Steam, remove mods that are no longer active, and copy Steam's `ModsConfig.xml`
 (load order). They add settings files only for mods that are new to the stable copy.
-Stable saves and existing mod settings are left alone.
+Stable saves and existing mod settings are left alone. Steam's Missile Girl/Gagarin XML cache
+(`MissileGirl/Cache`) is never copied: it records Steam paths and would force a rebuild.
 
 | option | effect |
 |---|---|
@@ -130,7 +132,8 @@ snapshot, and whether RimWorld is running.
 
 Runs the stable copy with `-savedatafolder` pointing at `userdata/`. Anything after `--` is
 passed to RimWorld, e.g. `rimstable launch -- -popupwindow`. The previous `Player.log` is
-kept as `Player-prev.log`.
+kept as `Player-prev.log`. Before starting, it installs the NoSteamNag helper mod and activates
+it after Harmony if it isn't already active.
 
 ### `shortcut [--path FILE] [--force]`
 
@@ -162,6 +165,13 @@ that check.
 - Launched outside Steam, SteamAPI init fails on purpose. That prevents a Workshop scan
   and duplicate mods. DLCs load from `game/Data/`; this was verified on 1.6.4871 rev600
   with all 6 DLCs and 253 active mods, and `activeMods` was unchanged after launch.
+- Because SteamAPI init fails, RimWorld shows a "Could not initialize Steam API" dialog at the
+  main menu. The bundled `NoSteamNag/` mod (packageId `rimstable.nosteamnag`, needs Harmony)
+  closes it with a postfix on `UIRoot_Entry.Init`; Steam stays disconnected. `freeze` and
+  `launch` copy it to `game/Mods/rimstable_nosteamnag/` and activate it after
+  `brrainz.harmony`, and `diff` doesn't report it. The prebuilt DLL is committed. If a game
+  update breaks it, rebuild with `dotnet build -c Release` in `NoSteamNag/Source`
+  (`-p:GameDir=<game dir>` if the stable root isn't the default).
 - Unity's own PlayerPrefs (window size and similar) are still written to
   `~/.config/unity3d/Ludeon Studios/RimWorld by Ludeon Studios/prefs` on Linux, or to the
   registry on Windows. Game config is not.
