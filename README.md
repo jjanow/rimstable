@@ -4,9 +4,34 @@ Keeps a frozen, Steam-independent RimWorld install that only changes when you sa
 The Steam install (game + Workshop mods) becomes a test bed that updates freely; the
 stable copy is never touched by Steam.
 
-Runs on Linux and Windows. Needs Python 3 (stdlib only) and `restic` (>= 0.17) on PATH. It is not
-installed on PATH; run it as `~/repos/rimstable/rimstable <command>` on Linux, or
+Runs on Linux and Windows. The command line needs Python 3 (stdlib only) and `restic` (>= 0.17) on PATH.
+It is not installed on PATH; run it as `~/repos/rimstable/rimstable <command>` on Linux, or
 `python path\to\rimstable <command>` on Windows. With no arguments it prints help and the launch command.
+
+## Manager window
+
+`rimstable gui` opens a window that does everything the commands do: an overview of the stable copy
+against Steam, a searchable mod list with one-click pull, snapshots with restore and prune, a Play
+button, and a log of every command it ran. It follows the system light/dark setting
+(`RIMSTABLE_THEME=light` or `dark` overrides it).
+
+The window needs [PySide6](https://pypi.org/project/PySide6/) (Qt). Install it in a venv
+next to the script, and `rimstable gui` picks it up without needing to be activated:
+
+```sh
+python3 -m venv ~/repos/rimstable/.venv                 # Windows: py -m venv path\to\rimstable\.venv
+~/repos/rimstable/.venv/bin/pip install PySide6          # Windows: path\to\rimstable\.venv\Scripts\pip install PySide6
+~/repos/rimstable/rimstable gui
+~/repos/rimstable/rimstable shortcut --gui               # optional: a "Rimstable" desktop launcher
+```
+
+The window only reads files itself. Every change runs the matching command (`rimstable freeze`, `pull`,
+`snap`, `restore`, `prune`, `shortcut`) as a child process, so the checks below apply unchanged, and
+the window asks before anything destructive (restore, prune, refreeze with `--userdata`). Play starts
+`rimstable launch` detached, so closing the window doesn't close the game.
+
+The code is in `rimstablelib/`: `core.py` (detection, copying, restic, safety checks), `cli.py` (the
+commands) and `gui/` (the window). The `rimstable` script is a thin entry point.
 
 ## Where it looks
 
@@ -52,6 +77,7 @@ Run with no arguments, or `-h` after any command (`rimstable prune -h`), for bui
 | `status` | summary of the stable copy |
 | `launch` | run the stable copy |
 | `shortcut` | create a desktop launcher |
+| `gui` | open the manager window (see above) |
 
 ### `freeze [--userdata] [--allow-missing] [--force] [-m LABEL]`
 
@@ -135,7 +161,7 @@ passed to RimWorld, e.g. `rimstable launch -- -popupwindow`. The previous `Playe
 kept as `Player-prev.log`. Before starting, it installs the NoSteamNag helper mod and activates
 it after Harmony if it isn't already active.
 
-### `shortcut [--path FILE] [--force]`
+### `shortcut [--path FILE] [--force] [--gui]`
 
 Creates a "RimWorld (Stable)" launcher on the Desktop: a `.desktop` file on Linux, a `.lnk` on
 Windows.
@@ -144,6 +170,12 @@ Windows.
 |---|---|
 | `--path FILE` | write the shortcut to `FILE` instead of the Desktop |
 | `--force` | overwrite an existing shortcut |
+| `--gui` | create a "Rimstable" launcher for the manager window instead |
+
+### `gui`
+
+Opens the manager window. If the running Python has no PySide6 it uses `.venv/` next to the script,
+or prints how to create it.
 
 ### Safety checks
 
@@ -176,5 +208,10 @@ that check.
   `~/.config/unity3d/Ludeon Studios/RimWorld by Ludeon Studios/prefs` on Linux, or to the
   registry on Windows. Game config is not.
 - The Windows code paths have not been tested on Windows yet. In particular, check that
-  `rimstable launch` starts the frozen copy and doesn't hand off to the Steam one.
+  `rimstable launch` starts the frozen copy and doesn't hand off to the Steam one. The manager
+  window hasn't been run on Windows either: check that commands run without a console window popping
+  up, that Play starts the game, and that shortcuts made from the window work (they point at the
+  `.venv`'s `pythonw.exe` when the window runs from there).
+- The manager window follows light/dark changes while it's open only with PySide6 6.5 or newer;
+  older versions pick the theme at startup.
 - `Version.txt` can be stale. The real revision comes from the game's ModsConfig.xml `<version>`.
