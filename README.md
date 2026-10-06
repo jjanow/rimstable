@@ -11,8 +11,8 @@ It is not installed on PATH; run it as `~/repos/rimstable/rimstable <command>` o
 ## Manager window
 
 `rimstable gui` opens a window that does everything the commands do: an overview of the stable copy
-against Steam, a searchable mod list with one-click pull, snapshots with restore and prune, a Play
-button, and a log of every command it ran. It follows the system light/dark setting
+against Steam, a searchable mod list with "Update all" and per-mod pull, snapshots with restore and
+prune, a Play button, and a log of every command it ran. It follows the system light/dark setting
 (`RIMSTABLE_THEME=light` or `dark` overrides it).
 
 The window needs [PySide6](https://pypi.org/project/PySide6/) (Qt). Install it in a venv
@@ -69,7 +69,7 @@ Run with no arguments, or `-h` after any command (`rimstable prune -h`), for bui
 |---|---|
 | `freeze` | build or refresh the stable copy from the Steam install |
 | `diff` | show what changed on Steam since the last freeze |
-| `pull <mod>` | update a single mod from Steam |
+| `pull <mod>` | update a single mod from Steam (`--all`: every changed mod) |
 | `snap` | take a snapshot |
 | `list` | list snapshots |
 | `restore <id>` | roll the stable copy back to a snapshot |
@@ -105,13 +105,17 @@ Read-only. Compares the stable copy with the Steam install and shows:
 - differences in the active mod list
 - how many stable mods support the Steam game's version (e.g. 1.7)
 
-### `pull <mod> [--force]`
+### `pull <mod> [--force]`, `pull --all [--force]`
 
 Takes a snapshot, then copies one mod from the Workshop folder into the stable copy.
 `<mod>` can be an exact packageId or Workshop id, or part of the mod's name or packageId.
 It has to match exactly one mod, or pull lists the candidates and stops. Pull doesn't change the
 load order. If the mod isn't active in the stable copy, enable it in the in-game mod manager.
 `--force` skips the "Steam is mid-update" check.
+
+`--all` updates every stable mod that `diff` lists as updated on Steam, after a single snapshot.
+It doesn't add Workshop mods the stable copy doesn't have, and leaves mods that are no longer on Steam
+alone. The manager window's "Update all" button runs this.
 
 ### `snap [-m LABEL]`
 
@@ -140,7 +144,7 @@ Snapshots are taken automatically, so they count toward `N`:
 |---|---|
 | `freeze` (first run) | `first freeze` after copying |
 | `freeze` (refreeze) | `pre-refreeze` before, then `refreeze` (or your `-m` label) after |
-| `pull` | `pre-pull <mod name>` before |
+| `pull` | `pre-pull <mod name>` before (`pre-pull all (N mods)` with `--all`) |
 | `restore` | `pre-restore <id>` before |
 | `snap` | `manual` (or your `-m` label) |
 

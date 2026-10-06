@@ -457,22 +457,21 @@ def label_of(s):
 
 # ---------- reports ----------
 
+def changed_mods(man, ws):
+    """(manifest record, Workshop mod) for every stable mod whose Steam copy changed since it was frozen."""
+    return [(r, ws[r["packageId"]]) for r in man["mods"]
+            if r["packageId"] in ws and fingerprint(ws[r["packageId"]]["dir"]) != r["fingerprint"]]
+
+
 def diff_report():
     """What changed on Steam since the freeze, as data (the CLI's `diff` and the GUI format it)."""
     man = load_manifest()
     steam_game = game_info(GAME_SRC, CFG_SRC)
     target = major_minor(steam_game["version_txt"])
     ws = index_mods(WS_SRC)
-    changed, gone, ready = [], [], 0
-    for r in man["mods"]:
-        cur = ws.get(r["packageId"])
-        if not cur:
-            gone.append(r)
-            continue
-        if target in cur["supportedVersions"]:
-            ready += 1
-        if fingerprint(cur["dir"]) != r["fingerprint"]:
-            changed.append((r, cur))
+    gone = [r for r in man["mods"] if r["packageId"] not in ws]
+    ready = sum(target in ws[r["packageId"]]["supportedVersions"] for r in man["mods"] if r["packageId"] in ws)
+    changed = changed_mods(man, ws)
     steam_active = read_modsconfig(CFG_SRC)["active"]
     stable_active = read_modsconfig(USERDATA)["active"]
     return {

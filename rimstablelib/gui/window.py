@@ -281,7 +281,7 @@ class MainWindow(QMainWindow):
     def _cmd_started(self, args):
         self.cmd_started = time.monotonic()
         self.cmd_args = args
-        self.banner.show_state("busy", TITLES.get(args[0], args[0]) + "…", "Starting…")
+        self.banner.show_state("busy", self._title(args) + "…", "Starting…")
         self.pages["activity"].started(args)
         self._update_controls()
 
@@ -293,7 +293,7 @@ class MainWindow(QMainWindow):
     def _cmd_finished(self, ok, msg):
         secs = time.monotonic() - self.cmd_started
         self.pages["activity"].finished(ok, secs)
-        name = TITLES.get(self.cmd_args[0], self.cmd_args[0])
+        name = self._title(self.cmd_args)
         if ok:
             self.banner.show_state("ok", f"{name} finished", f"Took {secs:.0f}s.")
         else:
@@ -301,6 +301,9 @@ class MainWindow(QMainWindow):
         self._update_controls()
         self.refresh()
         self.poll()
+
+    def _title(self, args):
+        return "Updating mods" if args[:2] == ["pull", "--all"] else TITLES.get(args[0], args[0])
 
     def freeze(self):
         first = not self.state.get("manifest")
@@ -323,6 +326,19 @@ class MainWindow(QMainWindow):
                            f"A “pre-pull” snapshot is taken first.",
                            f"Pull {row['name'][:40]}", icon_name="download", details=details):
             self.run(["pull", row["packageId"]])
+
+    def update_all(self):
+        changed = sorted((cur["name"] for _, cur in (self.diff or {}).get("changed", [])), key=str.lower)
+        if not changed or self.runner.busy:
+            return
+        shown = changed[:10]
+        more = f"\n…and {len(changed) - len(shown)} more" if len(changed) > len(shown) else ""
+        if dialogs.confirm(self, f"Update {len(changed)} mod{'s' if len(changed) != 1 else ''}?",
+                           "Copies the current Steam version of every stable mod that changed since the freeze. "
+                           "One \u201cpre-pull all\u201d snapshot is taken first. The load order isn't changed, "
+                           "and Workshop mods that aren't in the stable copy aren't added.",
+                           f"Update {len(changed)}", icon_name="download", details="\n".join(shown) + more):
+            self.run(["pull", "--all"])
 
     def restore(self, s):
         lbl = core.label_of(s) or "unlabelled"
@@ -381,7 +397,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, ev):
         if self.runner.busy and not dialogs.confirm(
                 self, "A command is still running",
-                f"{TITLES.get(self.cmd_args[0], self.cmd_args[0])} hasn't finished. Closing now stops it partway "
+                f"{self._title(self.cmd_args)} hasn't finished. Closing now stops it partway "
                 "through.", "Close anyway", tone="danger"):
             ev.ignore()
             return

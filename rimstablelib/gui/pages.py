@@ -119,9 +119,16 @@ class OverviewPage(Page):
         self.s_snaps = StatCard("Snapshots")
         self.stat_cols = 0
         self._layout_stats(4)
-        self.review_btn = button("Review updates →", "link")
+        self.review_btn = button("Review →", "link")
         self.review_btn.clicked.connect(lambda: win.show_mods("update"))
-        self.s_updates.body.addWidget(self.review_btn, 0, Qt.AlignLeft)
+        self.update_all_btn = button("Update all", "link", tooltip="Pull every changed mod from Steam")
+        self.update_all_btn.clicked.connect(win.update_all)
+        links = QHBoxLayout()
+        links.setSpacing(18)
+        links.addWidget(self.update_all_btn)
+        links.addWidget(self.review_btn)
+        links.addStretch(1)
+        self.s_updates.body.addLayout(links)
         self.snaps_btn = button("Manage snapshots →", "link")
         self.snaps_btn.clicked.connect(lambda: win.go("snapshots"))
         self.s_snaps.body.addWidget(self.snaps_btn, 0, Qt.AlignLeft)
@@ -239,6 +246,7 @@ class OverviewPage(Page):
             cap = "updated on Steam since the freeze" + (f"; {gone} no longer on Steam" if gone else "")
             self.s_updates.set(str(n), cap, "warn" if n else "ok")
             self.review_btn.setVisible(bool(n))
+            self.update_all_btn.setVisible(bool(n))
             total = len(man["mods"])
             self.s_support.set(f"{diff['ready']}/{total}", f"mods list support for {diff['target']} in their "
                                "current Steam version", None, (diff["ready"], total))
@@ -263,6 +271,7 @@ class OverviewPage(Page):
             for c in (self.s_updates, self.s_support):
                 c.set("?", diff_error, "danger")
             self.review_btn.hide()
+            self.update_all_btn.hide()
             self.load_pill.set("unknown", "neutral")
             self.load_text.setText(diff_error)
             self.load_list.hide()
@@ -270,6 +279,7 @@ class OverviewPage(Page):
             for c in (self.s_updates, self.s_support):
                 c.set("…", "comparing with Steam")
             self.review_btn.hide()
+            self.update_all_btn.hide()
             self.load_pill.set("checking", "neutral")
             self.load_text.setText("Comparing with the Steam install…")
             self.load_list.hide()
@@ -284,7 +294,7 @@ class OverviewPage(Page):
             self.s_snaps.set("0", "none yet")
 
     def set_enabled(self, can_modify, reason):
-        for b in (self.refreeze_btn, self.snap_btn, self.freeze_first):
+        for b in (self.refreeze_btn, self.snap_btn, self.freeze_first, self.update_all_btn):
             b.setEnabled(can_modify)
             b.setToolTip(reason if not can_modify else "")
 
@@ -427,9 +437,14 @@ def make_table(model):
 class ModsPage(Page):
     def __init__(self, win):
         super().__init__(win, "Mods", "Frozen mods compared with the Steam Workshop folder")
-        self.pull_btn = button("Pull from Steam…", "primary", "download",
+        self.pull_btn = button("Pull selected…", None, "download",
                                "Copy the selected mod's current Steam version into the stable copy")
         self.pull_btn.clicked.connect(self._pull)
+        self.update_all_btn = button("Update all", "primary", "refresh",
+                                     "Pull every stable mod that changed on Steam, after one snapshot")
+        self.update_all_btn.clicked.connect(win.update_all)
+        self.updates = 0
+        self.actions.addWidget(self.update_all_btn)
         self.actions.addWidget(self.pull_btn)
 
         bar = QHBoxLayout()
@@ -489,6 +504,8 @@ class ModsPage(Page):
         sel = self.selected()
         self.model.set_rows(rows, diff["target"] if diff else None)
         counts = {k: sum(r["status"] == k for r in rows) for k in STATUS}
+        self.updates = counts["update"]
+        self.update_all_btn.setText(f"Update all  {self.updates}" if self.updates else "Update all")
         self.seg.set_text("stable", f"In stable  {len(man['mods'])}")
         self.seg.set_text("update", f"Updates  {counts['update']}" if diff else "Updates")
         self.seg.set_text("new", f"Not in stable  {counts['new']}" if diff else "Not in stable")
@@ -499,8 +516,8 @@ class ModsPage(Page):
         elif not diff:
             self.hint.setText("Comparing with the Steam install…")
         else:
-            self.hint.setText("Pulling copies one mod's Steam version into the stable copy after taking a snapshot. "
-                              "It doesn't change the load order.")
+            self.hint.setText("Update all copies the Steam version of every changed mod after one snapshot; "
+                              "Pull selected does the same for one mod. Neither changes the load order.")
         if sel:
             for i in range(self.proxy.rowCount()):
                 if self.model.rows[self.proxy.mapToSource(self.proxy.index(i, 0)).row()]["packageId"] == sel["packageId"]:
@@ -518,6 +535,10 @@ class ModsPage(Page):
         r = self.selected()
         ok = bool(r and r["status"] in ("update", "new")) and self.can_modify
         self.pull_btn.setEnabled(ok)
+        self.update_all_btn.setEnabled(self.can_modify and self.updates > 0)
+        self.update_all_btn.setToolTip(self.reason if not self.can_modify else
+                                       "Pull every stable mod that changed on Steam, after one snapshot"
+                                       if self.updates else "Every stable mod matches Steam")
         if not self.can_modify:
             self.pull_btn.setToolTip(self.reason)
         elif r and r["status"] not in ("update", "new"):

@@ -11,8 +11,8 @@ from pathlib import Path
 from . import core
 from .core import (
     APP_DIR, CFG_SRC, EXE_NAME, GAME, GAME_SRC, HELPER_FOLDER, MANIFEST, MARKER, MODS, ROOT, SCRIPT,
-    RimstableError, USERDATA, USERDATA_SKIP, WINDOWS, WS_SRC, assert_dest, desktop_dir, die, diff_report, ensure_repo,
-    game_info, index_mods, install_helper, label_of, launch_hint, load_manifest, mod_record,
+    RimstableError, USERDATA, USERDATA_SKIP, WINDOWS, WS_SRC, assert_dest, changed_mods, desktop_dir, die,
+    diff_report, ensure_repo, game_info, index_mods, install_helper, label_of, launch_hint, load_manifest, mod_record,
     read_modsconfig, remove_mod_dir, require_not_running, require_steam_idle, resolve_active, restic,
     rimworld_pids, save_manifest, shortcut_name, snap_path, snapshot, snapshots, sync_into,
     workshop_times, write_shortcut,
@@ -88,10 +88,14 @@ def find_mod(query, records):
 
 
 def cmd_pull(a):
+    if a.all == bool(a.mod):
+        die("name one mod to pull, or pass --all (not both)")
     require_not_running()
     require_steam_idle(a.force)
     man = load_manifest()
     ws = index_mods(WS_SRC)
+    if a.all:
+        return pull_all(man, ws)
     candidates = [{"packageId": pid, "folder": m["dir"].name, "name": m["name"]} for pid, m in ws.items()]
     hits = find_mod(a.mod, candidates)
     if len(hits) != 1:
@@ -108,6 +112,24 @@ def cmd_pull(a):
     active = read_modsconfig(USERDATA)["active"]
     if pid not in active:
         print("note: this mod is not active in the stable install; enable it in the in-game mod manager")
+
+
+def pull_all(man, ws):
+    """Update every stable mod that changed on Steam, after one snapshot. Mods new to Steam aren't added."""
+    changed = sorted(changed_mods(man, ws), key=lambda x: x[1]["name"].lower())
+    if not changed:
+        print("all stable mods match Steam; nothing to pull")
+        return
+    snapshot(f"pre-pull all ({len(changed)} mods)")
+    times = workshop_times()
+    for i, (r, cur) in enumerate(changed, 1):
+        print(f"[pull {i}/{len(changed)}] {cur['name']}")
+        src = dict(cur, packageId=r["packageId"])
+        sync_into(src["dir"], MODS / src["dir"].name)
+        rec = mod_record(src, times)
+        man["mods"] = [m for m in man["mods"] if m["packageId"] != r["packageId"]] + [rec]
+        save_manifest(man)  # after each mod, so an interrupted run leaves an accurate manifest
+    print(f"pulled {len(changed)} mods")
 
 
 def cmd_diff(a):
@@ -268,8 +290,10 @@ def main():
     s = sub.add_parser("diff", help="what changed on Steam since the freeze")
     s.set_defaults(fn=cmd_diff)
 
-    s = sub.add_parser("pull", help="update one mod from Steam into the stable install (snapshots first)")
-    s.add_argument("mod", help="packageId, Workshop id, or part of the name")
+    s = sub.add_parser("pull", help="update one mod, or all changed mods, from Steam (snapshots first)")
+    s.add_argument("mod", nargs="?", help="packageId, Workshop id, or part of the name")
+    s.add_argument("--all", action="store_true",
+                   help="update every stable mod that changed on Steam since the freeze, after one snapshot")
     s.add_argument("--force", action="store_true", help="ignore the Steam-is-updating check")
     s.set_defaults(fn=cmd_pull)
 
