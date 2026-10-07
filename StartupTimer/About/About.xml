@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModMetaData>
+  <name>rimstable: Startup Timer</name>
+  <author>rimstable</author>
+  <packageId>rimstable.startuptimer</packageId>
+  <supportedVersions>
+    <li>1.6</li>
+  </supportedVersions>
+  <description>Diagnostic: times each mod's startup work (mod class, static constructors, delayed init, XML load, Harmony patching) and writes StartupTimer.txt to the save data folder when the main menu is reached. Load it directly after Harmony. Remove it when done.</description>
+  <modDependencies>
+    <li>
+      <packageId>brrainz.harmony</packageId>
+      <displayName>Harmony</displayName>
+      <steamWorkshopUrl>steam://url/CommunityFilePage/2009463077</steamWorkshopUrl>
+    </li>
+  </modDependencies>
+  <loadAfter>
+    <li>brrainz.harmony</li>
+  </loadAfter>
+</ModMetaData>
