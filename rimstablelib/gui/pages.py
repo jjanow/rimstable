@@ -167,6 +167,9 @@ class OverviewPage(Page):
         row.addWidget(act, 2)
         dl.addLayout(row)
 
+        self.dds_card = self._dds_card()
+        dl.addWidget(self.dds_card)
+
         self.locations = self._locations_card()
         dl.addWidget(self.locations)
         dl.addStretch(1)
@@ -207,6 +210,47 @@ class OverviewPage(Page):
         grid.setColumnStretch(1, 1)
         c.body.addLayout(grid)
         return c
+
+    def _dds_card(self):
+        c = Card("Textures (DDS)")
+        self.dds_btn = button("Encode textures…", None, "image",
+                              "Pre-encode mod textures as DDS for a faster start (rimstable dds)")
+        self.dds_btn.clicked.connect(self.win.encode_textures)
+        c.header.addWidget(self.dds_btn)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(18)
+        grid.setVerticalSpacing(8)
+        self.dds_rows = {}
+        for i, (key, name) in enumerate([("stable", "Stable copy"), ("steam", "Steam install")]):
+            grid.addWidget(label(name, "muted"), i, 0, Qt.AlignTop)
+            cap = label("checking…", "muted", wrap=True)
+            pill = Pill("…", "neutral")
+            grid.addWidget(cap, i, 1)
+            grid.addWidget(pill, i, 2, Qt.AlignRight)
+            self.dds_rows[key] = (cap, pill)
+        grid.setColumnStretch(1, 1)
+        c.body.addLayout(grid)
+        return c
+
+    def update_dds(self, info, error):
+        for key, (cap, pill) in self.dds_rows.items():
+            s = (info or {}).get(key)
+            if s is None:
+                pill.set("?" if error else "…", "danger" if error else "neutral")
+                cap.setText(error or "checking…")
+                continue
+            kept = f"; {s['badsize']:,} kept as PNG (size not a multiple of 4)" if s["badsize"] else ""
+            if not s["enabled"]:
+                pill.set("off", "neutral")
+                cap.setText(f"Loads PNGs. {s['todo']:,} textures could be encoded." if s["todo"]
+                            else "Loads PNGs; nothing to encode.")
+            elif s["todo"]:
+                pill.set(f"{s['todo']:,} to encode", "warn")
+                cap.setText(f"{s['recorded']:,} encoded; {s['todo']:,} new or changed since"
+                            + (" (Workshop updates)" if key == "steam" else "") + kept)
+            else:
+                pill.set(f"{s['recorded']:,} encoded", "ok")
+                cap.setText("Up to date" + (", kept current by freeze and pull" if key == "stable" else "") + kept)
 
     def _fill_locations(self, card):
         paths = {"steam": core.GAME_SRC, "workshop": core.WS_SRC, "config": core.CFG_SRC, "root": core.ROOT}
@@ -294,7 +338,7 @@ class OverviewPage(Page):
             self.s_snaps.set("0", "none yet")
 
     def set_enabled(self, can_modify, reason):
-        for b in (self.refreeze_btn, self.snap_btn, self.freeze_first, self.update_all_btn):
+        for b in (self.refreeze_btn, self.snap_btn, self.freeze_first, self.update_all_btn, self.dds_btn):
             b.setEnabled(can_modify)
             b.setToolTip(reason if not can_modify else "")
 

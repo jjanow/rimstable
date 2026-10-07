@@ -350,16 +350,26 @@ def game_info(gamedir, cfgdir=None):
     return info
 
 
-def fingerprint(d):
-    """Cheap tree fingerprint: relpath, size and mtime of every file (copy2 preserves mtime)."""
+def fingerprint(d, skip=()):
+    """Cheap tree fingerprint: relpath, size and mtime of every file (copy2 preserves mtime).
+    `skip` holds d-relative posix paths to leave out."""
     h = hashlib.sha1()
     for dirpath, dirnames, filenames in os.walk(d):
         dirnames.sort()
         for fn in sorted(filenames):
             p = os.path.join(dirpath, fn)
+            rel = os.path.relpath(p, d).replace(os.sep, '/')
+            if rel in skip:
+                continue
             st = os.lstat(p)
-            h.update(f"{os.path.relpath(p, d).replace(os.sep, '/')}\0{st.st_size}\0{int(st.st_mtime)}\n".encode())
+            h.update(f"{rel}\0{st.st_size}\0{int(st.st_mtime)}\n".encode())
     return h.hexdigest()
+
+
+def source_fingerprint(d):
+    """Fingerprint of a Steam mod folder, ignoring DDS files rimstable generated in it."""
+    from .dds import workshop_generated
+    return fingerprint(d, skip=workshop_generated(d))
 
 
 def major_minor(v):
@@ -405,7 +415,7 @@ def mod_record(mod, times):
         "name": mod["name"],
         "supportedVersions": mod["supportedVersions"],
         "timeupdated": times.get(d.name),
-        "fingerprint": fingerprint(d),
+        "fingerprint": source_fingerprint(d),
     }
 
 
@@ -460,7 +470,7 @@ def label_of(s):
 def changed_mods(man, ws):
     """(manifest record, Workshop mod) for every stable mod whose Steam copy changed since it was frozen."""
     return [(r, ws[r["packageId"]]) for r in man["mods"]
-            if r["packageId"] in ws and fingerprint(ws[r["packageId"]]["dir"]) != r["fingerprint"]]
+            if r["packageId"] in ws and source_fingerprint(ws[r["packageId"]]["dir"]) != r["fingerprint"]]
 
 
 def diff_report():

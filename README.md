@@ -12,7 +12,8 @@ It is not installed on PATH; run it as `~/repos/rimstable/rimstable <command>` o
 
 `rimstable gui` opens a window that does everything the commands do: an overview of the stable copy
 against Steam, a searchable mod list with "Update all" and per-mod pull, snapshots with restore and
-prune, a Play button, and a log of every command it ran. It follows the system light/dark setting
+prune, a Textures (DDS) card showing what is encoded or waiting for each install with an
+"Encode textures…" dialog, a Play button, and a log of every command it ran. It follows the system light/dark setting
 (`RIMSTABLE_THEME=light` or `dark` overrides it).
 
 The window needs [PySide6](https://pypi.org/project/PySide6/) (Qt). Install it in a venv
@@ -26,12 +27,12 @@ python3 -m venv ~/repos/rimstable/.venv                 # Windows: py -m venv pa
 ```
 
 The window only reads files itself. Every change runs the matching command (`rimstable freeze`, `pull`,
-`snap`, `restore`, `prune`, `shortcut`) as a child process, so the checks below apply unchanged, and
-the window asks before anything destructive (restore, prune, refreeze with `--userdata`). Play starts
+`snap`, `restore`, `prune`, `shortcut`, `dds`) as a child process, so the checks below apply unchanged, and
+the window asks before anything destructive (restore, prune, refreeze with `--userdata`, removing DDS). Play starts
 `rimstable launch` detached, so closing the window doesn't close the game.
 
-The code is in `rimstablelib/`: `core.py` (detection, copying, restic, safety checks), `cli.py` (the
-commands) and `gui/` (the window). The `rimstable` script is a thin entry point.
+The code is in `rimstablelib/`: `core.py` (detection, copying, restic, safety checks), `dds.py` (todds
+and the DDS ledgers), `cli.py` (the commands) and `gui/` (the window). The `rimstable` script is a thin entry point.
 
 ## Where it looks
 
@@ -75,6 +76,7 @@ Run with no arguments, or `-h` after any command (`rimstable prune -h`), for bui
 | `restore <id>` | roll the stable copy back to a snapshot |
 | `prune` | delete all but the newest snapshots |
 | `status` | summary of the stable copy |
+| `dds` | pre-encode mod textures as DDS for a faster start (stable and/or Steam) |
 | `launch` | run the stable copy |
 | `shortcut` | create a desktop launcher |
 | `gui` | open the manager window (see above) |
@@ -156,7 +158,38 @@ deletes nothing.
 ### `status`
 
 Shows the stable root, freeze time, game version, mod count, snapshot count with the latest
-snapshot, and whether RimWorld is running.
+snapshot, how many generated DDS each target has (or `off`), and whether RimWorld is running.
+
+### `dds [MOD ...] [--target stable|steam|both] [--clean] [-n] [--force]`
+
+Encodes each mod's `Textures/**/*.png` as DDS with [todds](https://github.com/todds-encoder/todds).
+RimWorld loads `Foo.dds` instead of `Foo.png` when both exist, which skips PNG decoding and
+compression at startup. With ~250 mods this cut texture loading from 63s to 9s, about 60s off
+the startup. The first full run takes a few minutes and roughly doubles the size of the mods
+folder (2 GB to 4 GB here).
+
+- `--target stable` (default) is the stable copy, `steam` is the Steam install's active mods
+  (Workshop and local `Mods/`), and `both` is both.
+- `MOD ...` limits the run to some mod folders (Workshop id) or packageIds.
+- Re-runs only encode new PNGs and PNGs that changed since their DDS was made.
+- PNGs whose width or height isn't a multiple of 4 are skipped. Unity refuses block-compressed
+  DDS of that size and the texture would go missing, so those keep loading as PNG.
+- `--clean` deletes the generated DDS. For all mods it also turns DDS off for that target.
+- `-n`, `--dry-run` only reports counts.
+
+Every DDS rimstable makes is recorded with the PNG it came from, in
+`game/Mods/.rimstable-dds.json` (stable, part of snapshots) and `dds-steam.json` in the stable
+root (Steam). Only recorded files are ever replaced or deleted, so DDS that mods ship are left alone.
+`diff` and `pull` ignore generated DDS in Steam mod folders, so converting the Steam install doesn't
+make mods look updated.
+
+Once enabled for the stable copy, `freeze` and `pull` keep the existing DDS and re-encode only
+what changed. The Steam install has no hook. Run `rimstable dds --target steam` again after
+Workshop updates.
+
+The todds binary is looked up via `RIMSTABLE_TODDS`, then `PATH`, then `tools/todds`
+(`tools/todds.exe` on Windows) next to the script. `tools/` is gitignored; download a release
+from GitHub into it.
 
 ### `launch [-- ARGS]`
 
@@ -183,9 +216,10 @@ or prints how to create it.
 
 ### Safety checks
 
-`freeze`, `pull`, `restore`, `snap`, `prune` and `launch` won't run while RimWorld is running.
-`freeze` and `pull` also won't run while Steam is updating RimWorld or a mod; `--force` skips
-that check.
+`freeze`, `pull`, `restore`, `snap`, `prune`, `launch` and `dds` (except `-n`) won't run while
+RimWorld is running. `freeze`, `pull` and `dds --target steam` also won't run while Steam is updating
+RimWorld or a mod; `--force` skips that check. In Steam's folders, `dds` only creates `.dds` files
+next to PNGs and only deletes ones it recorded; nothing else there is ever written.
 
 ## DLC workflow
 

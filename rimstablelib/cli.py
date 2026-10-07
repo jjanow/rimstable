@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import core
+from . import core, dds
 from .core import (
     APP_DIR, CFG_SRC, EXE_NAME, GAME, GAME_SRC, HELPER_FOLDER, MANIFEST, MARKER, MODS, ROOT, SCRIPT,
     RimstableError, USERDATA, USERDATA_SKIP, WINDOWS, WS_SRC, assert_dest, changed_mods, desktop_dir, die,
@@ -46,11 +46,13 @@ def cmd_freeze(a):
     for mod in mods:
         folder = Path(mod["dir"]).name
         keep.add(folder)
-        sync_into(mod["dir"], MODS / folder)
+        sync_into(mod["dir"], MODS / folder, exclude=dds.sync_exclude(mod["dir"], MODS / folder))
     for d in MODS.iterdir():
         if d.is_dir() and d.name not in keep:
             print(f"[mods] removing no-longer-active {d.name}")
             remove_mod_dir(d)
+    if dds.enabled(dds.STABLE):
+        dds.convert(dds.STABLE)
 
     if first or a.userdata:
         print(f"[userdata] {CFG_SRC} -> {USERDATA}" + (" (replacing, saves included)" if not first else ""))
@@ -104,7 +106,10 @@ def cmd_pull(a):
     pid = hits[0]["packageId"]
     src = dict(ws[pid], packageId=pid)
     snapshot(f"pre-pull {src['name']}")
-    sync_into(src["dir"], MODS / src["dir"].name)
+    dst = MODS / src["dir"].name
+    sync_into(src["dir"], dst, exclude=dds.sync_exclude(src["dir"], dst))
+    if dds.enabled(dds.STABLE):
+        dds.convert(dds.STABLE, [dst])
     rec = mod_record(src, workshop_times())
     man["mods"] = [r for r in man["mods"] if r["packageId"] != pid] + [rec]
     save_manifest(man)
@@ -122,13 +127,18 @@ def pull_all(man, ws):
         return
     snapshot(f"pre-pull all ({len(changed)} mods)")
     times = workshop_times()
+    pulled = []
     for i, (r, cur) in enumerate(changed, 1):
         print(f"[pull {i}/{len(changed)}] {cur['name']}")
         src = dict(cur, packageId=r["packageId"])
-        sync_into(src["dir"], MODS / src["dir"].name)
+        dst = MODS / src["dir"].name
+        sync_into(src["dir"], dst, exclude=dds.sync_exclude(src["dir"], dst))
+        pulled.append(dst)
         rec = mod_record(src, times)
         man["mods"] = [m for m in man["mods"] if m["packageId"] != r["packageId"]] + [rec]
         save_manifest(man)  # after each mod, so an interrupted run leaves an accurate manifest
+    if dds.enabled(dds.STABLE):
+        dds.convert(dds.STABLE, pulled)  # one todds run; if interrupted, 'rimstable dds' finishes the job
     print(f"pulled {len(changed)} mods")
 
 
@@ -211,6 +221,7 @@ def cmd_status(a):
     snaps = snapshots()
     if snaps:
         print(f"snaps    {len(snaps)}, latest {snaps[-1]['short_id']} {label_of(snaps[-1])}")
+    print(f"dds      {dds.status_line()}")
     pids = rimworld_pids()
     print(f"running  {'yes (pid ' + ' '.join(pids) + ')' if pids else 'no'}")
     print()
@@ -233,6 +244,21 @@ def cmd_launch(a):
         return
     os.chdir(GAME)
     os.execve(str(exe), argv, dict(os.environ, LC_ALL="C"))
+
+
+def cmd_dds(a):
+    dds.require_root()
+    if not a.dry_run:
+        require_not_running()
+    targets = dds.TARGETS[a.target]
+    if dds.STEAM in targets and not a.dry_run:
+        require_steam_idle(a.force)
+    for t in targets:
+        dirs = dds.mod_dirs(t, a.mods) if a.mods else None
+        if a.clean:
+            dds.clean(t, dirs, a.dry_run)
+        else:
+            dds.convert(t, dirs, a.dry_run)
 
 
 def cmd_shortcut(a):
@@ -320,6 +346,21 @@ def main():
     s = sub.add_parser("launch", help="run the stable install")
     s.add_argument("args", nargs=argparse.REMAINDER)
     s.set_defaults(fn=cmd_launch)
+
+    s = sub.add_parser("dds", help="pre-encode mod textures as DDS with todds (much faster startup)",
+                       description="Encode each mod's Textures/*.png as DDS with todds, which RimWorld loads "
+                                   "instead of the PNG. Only DDS that rimstable generated are ever replaced or "
+                                   "deleted; DDS that mods ship are left alone. Once enabled for the stable copy, "
+                                   "freeze and pull re-encode changed mods automatically; for Steam, run this again "
+                                   "after Workshop updates. Re-runs only encode what is new or changed.")
+    s.add_argument("mods", nargs="*", help="limit to these mod folders (Workshop id) or packageIds")
+    s.add_argument("--target", choices=["stable", "steam", "both"], default="stable",
+                   help="the stable copy (default), the Steam install's active mods, or both")
+    s.add_argument("--clean", action="store_true",
+                   help="delete the generated DDS instead (for all mods this also turns automatic re-encoding off)")
+    s.add_argument("-n", "--dry-run", action="store_true", help="only report what would happen")
+    s.add_argument("--force", action="store_true", help="ignore the Steam-is-updating check")
+    s.set_defaults(fn=cmd_dds)
 
     s = sub.add_parser("shortcut", help="put a 'RimWorld (Stable)' launcher on your desktop")
     s.add_argument("--path", help="write the shortcut (.desktop, or .lnk on Windows) here instead of the Desktop")

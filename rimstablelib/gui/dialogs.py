@@ -3,7 +3,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QSpinBox, QVBoxLayout
 
 from . import icons, theme
-from .widgets import button, label, refresh_icons, set_prop
+from .widgets import Segmented, button, label, refresh_icons, set_prop
 
 
 class Dialog(QDialog):
@@ -160,3 +160,90 @@ class PruneDialog(Dialog):
 
     def args(self):
         return ["prune", "--keep", str(self.keep.value())]
+
+
+class DdsDialog(Dialog):
+    """Encode (or remove) DDS textures for the stable copy, the Steam install, or both."""
+    TARGETS = [("stable", "Stable copy"), ("steam", "Steam install"), ("both", "Both")]
+    RATE = 75  # PNGs per second measured with todds on ~250 mods
+
+    def __init__(self, parent, info):
+        super().__init__(parent, "Encode textures", "image", width=540)
+        self.info = info or {}
+        self.body.addWidget(label("Encodes each mod's Textures PNGs as DDS with todds. RimWorld loads those "
+                                  "instead, which takes about a minute off the startup. Only DDS that rimstable "
+                                  "made are ever replaced or deleted; DDS that mods ship are left alone.",
+                                  "muted", wrap=True))
+        self.body.addSpacing(4)
+        self.body.addWidget(label("Install", "eyebrow"))
+        self.target = Segmented(self.TARGETS)
+        self.target.changed.connect(self._update)
+        self.body.addWidget(self.target, 0, Qt.AlignLeft)
+        self.summary = label("", wrap=True)
+        self.summary.setTextFormat(Qt.RichText)
+        self.body.addWidget(self.summary)
+        self.clean = QCheckBox("Remove the generated DDS instead")
+        self.clean.setToolTip("Textures load from PNG again. Removing all of them also turns automatic "
+                              "re-encoding after freeze/pull off.")
+        self.clean.toggled.connect(self._update)
+        self.body.addWidget(self.clean)
+        self.force = QCheckBox("Skip the “Steam is mid-update” check")
+        self.body.addWidget(self.force)
+        self.add_ok("Encode", icon="image")
+        self._update()
+
+    def _key(self):
+        return next(k for k, b in self.target.buttons.items() if b.isChecked())
+
+    def _targets(self):
+        k = self._key()
+        return ["stable", "steam"] if k == "both" else [k]
+
+    def _update(self, *_):
+        t = theme.current
+        clean = self.clean.isChecked()
+        lines, work = [], 0
+        for name in self._targets():
+            s = self.info.get(name)
+            title = dict(self.TARGETS)[name]
+            if not s:
+                lines.append(f"<b>{title}</b>: <span style='color:{t['muted']}'>counts unavailable</span>")
+                continue
+            if clean:
+                n = s["recorded"] if s["enabled"] else 0
+                work += n
+                lines.append(f"<b>{title}</b>: deletes {n:,} generated DDS" if n else
+                             f"<b>{title}</b>: <span style='color:{t['muted']}'>nothing to remove</span>")
+            else:
+                work += s["todo"]
+                parts = [f"{s['todo']:,} PNGs to encode" + (f" ({s['stale']:,} changed)" if s["stale"] else "")
+                         if s["todo"] else "nothing to encode",
+                         f"{s['recorded']:,} already done" if s["recorded"] else None,
+                         f"{s['badsize']:,} kept as PNG (size not a multiple of 4)" if s["badsize"] else None]
+                lines.append(f"<b>{title}</b>: " + f"<span style='color:{t['muted']}'> · </span>".join(
+                    p for p in parts if p))
+                if not s["enabled"] and name == "stable":
+                    lines.append(f"<span style='color:{t['muted']}'>Afterwards, freeze and pull keep the "
+                                 "stable copy's DDS up to date by themselves.</span>")
+                if name == "steam":
+                    lines.append(f"<span style='color:{t['muted']}'>Steam has no hook: run this again after "
+                                 "Workshop updates.</span>")
+        if not clean and work > self.RATE * 60:
+            lines.append(f"Takes about {round(work / self.RATE / 60)} min; the mods folder grows by roughly the "
+                         "size of its PNGs.")
+        self.summary.setText("<br>".join(lines))
+        self.ok.setEnabled(bool(work) or not clean)  # an encode run with nothing to do still turns DDS on
+        self.force.setVisible("steam" in self._targets() and not clean)
+        set_prop(self.ok, "kind", "danger" if clean else "primary")
+        self.ok.setText("Remove DDS" if clean else "Encode")
+        self.ok.setProperty("icon_name", "trash" if clean else "image")
+        refresh_icons(self)
+        self.adjustSize()
+
+    def args(self):
+        a = ["dds", "--target", self._key()]
+        if self.clean.isChecked():
+            a.append("--clean")
+        elif self.force.isChecked() and "steam" in self._targets():
+            a.append("--force")
+        return a

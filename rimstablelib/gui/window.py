@@ -7,7 +7,7 @@ from PySide6.QtGui import QDesktopServices, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton,
                                QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import core
+from .. import core, dds
 from . import dialogs, theme
 from .pages import ActivityPage, ModsPage, OverviewPage, SnapshotsPage, snap_time, when
 from .tasks import CommandRunner, error_text, launch_detached, run_async
@@ -15,7 +15,7 @@ from .widgets import Banner, Pill, button, label, refresh_icons
 
 NAV = [("overview", "Overview"), ("mods", "Mods"), ("snapshots", "Snapshots"), ("activity", "Activity")]
 TITLES = {"freeze": "Freezing", "pull": "Pulling", "snap": "Taking a snapshot", "restore": "Restoring",
-          "prune": "Pruning snapshots", "shortcut": "Creating a shortcut"}
+          "prune": "Pruning snapshots", "shortcut": "Creating a shortcut", "dds": "Encoding textures"}
 
 
 def steam_problem():
@@ -45,6 +45,14 @@ def load_state():
     return st
 
 
+def load_dds():
+    """DDS counts for both targets; a missing Steam side only blanks the Steam row."""
+    out = {"stable": dds.summary(dds.STABLE)}
+    if not steam_problem():
+        out["steam"] = dds.summary(dds.STEAM)
+    return out
+
+
 def load_diff():
     problem = steam_problem()
     if problem:
@@ -61,6 +69,7 @@ class MainWindow(QMainWindow):
         self.resize(1200, 780)
         self.setMinimumSize(980, 640)
         self.state, self.diff, self.diff_error = {}, None, None
+        self.dds_info, self.dds_error = None, None
         self.pids, self.loading, self.reload_pending, self.polling = [], False, False, False
         self.generation = 0
         self.cmd_started = 0.0
@@ -202,6 +211,8 @@ class MainWindow(QMainWindow):
         self.state = st
         self._render()
         if st.get("manifest"):
+            run_async(load_dds, lambda d: self._dds_loaded(gen, d, None),
+                      lambda e: self._dds_loaded(gen, None, e))
             run_async(load_diff, lambda d: self._diff_loaded(gen, d, None),
                       lambda e: self._diff_loaded(gen, None, e))
         else:
@@ -221,6 +232,12 @@ class MainWindow(QMainWindow):
         if self.reload_pending:
             self.reload_pending = False
             self.refresh()
+
+    def _dds_loaded(self, gen, info, err):
+        if gen != self.generation:
+            return
+        self.dds_info, self.dds_error = info, err
+        self.pages["overview"].update_dds(info, err)
 
     def _render(self):
         if not self.state:
@@ -303,11 +320,20 @@ class MainWindow(QMainWindow):
         self.poll()
 
     def _title(self, args):
-        return "Updating mods" if args[:2] == ["pull", "--all"] else TITLES.get(args[0], args[0])
+        if args[:2] == ["pull", "--all"]:
+            return "Updating mods"
+        if args[0] == "dds" and "--clean" in args:
+            return "Removing generated DDS"
+        return TITLES.get(args[0], args[0])
 
     def freeze(self):
         first = not self.state.get("manifest")
         d = dialogs.FreezeDialog(self, first)
+        if d.exec():
+            self.run(d.args())
+
+    def encode_textures(self):
+        d = dialogs.DdsDialog(self, self.dds_info)
         if d.exec():
             self.run(d.args())
 
