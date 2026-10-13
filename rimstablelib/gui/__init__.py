@@ -10,7 +10,6 @@ from . import theme
 def main():
     app = QApplication(sys.argv[:1])
     app.setApplicationName("Rimstable")
-    app.setDesktopFileName("rimstable")
     app.setStyle("Fusion")  # the same widgets on every platform; the stylesheet does the rest
     f = QFont(app.font())
     if f.pointSizeF() < 10:
