@@ -118,7 +118,7 @@ class SnapshotDialog(Dialog):
 
     def args(self):
         t = self.label.text().strip()
-        return ["snap"] + (["--label", t] if t else [])
+        return ["snap"] + ([t] if t else [])
 
 
 class PruneDialog(Dialog):

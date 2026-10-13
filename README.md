@@ -119,9 +119,10 @@ With no `<mod>`, pull updates every stable mod that `diff` lists as updated on S
 It doesn't add Workshop mods the stable copy doesn't have, and leaves mods that are no longer on Steam
 alone. The manager window's "Update all" button runs this.
 
-### `snap [-m LABEL]`
+### `snap [LABEL]`
 
 Takes a snapshot of `game/`, `userdata/` and `manifest.json`. The label defaults to `manual`.
+It can be several words, quoted or not: `rimstable snap before big update`.
 
 ### `list`
 
@@ -148,7 +149,7 @@ Snapshots are taken automatically, so they count toward `N`:
 | `freeze` (refreeze) | `pre-refreeze` before, then `refreeze` (or your `-m` label) after |
 | `pull` | `pre-pull <mod name>` before (`pre-pull all (N mods)` with no mod named) |
 | `restore` | `pre-restore <id>` before |
-| `snap` | `manual` (or your `-m` label) |
+| `snap` | `manual` (or your label) |
 
 For example, with 25 snapshots, `rimstable prune 5` deletes the oldest 20 and keeps
 the newest 5. The snapshot you care about can be pushed out by later automatic ones, so check
@@ -198,14 +199,13 @@ passed to RimWorld, e.g. `rimstable launch -- -popupwindow`. The previous `Playe
 kept as `Player-prev.log`. Before starting, it installs the NoSteamNag helper mod and activates
 it after Harmony if it isn't already active.
 
-### `shortcut [--path FILE] [--force] [--gui]`
+### `shortcut [FILE] [--force] [--gui]`
 
 Creates a "RimWorld (Stable)" launcher on the Desktop: a `.desktop` file on Linux, a `.lnk` on
-Windows.
+Windows. Give a `FILE` to write it there instead.
 
 | option | effect |
 |---|---|
-| `--path FILE` | write the shortcut to `FILE` instead of the Desktop |
 | `--force` | overwrite an existing shortcut |
 | `--gui` | create a "Rimstable" launcher for the manager window instead |
 

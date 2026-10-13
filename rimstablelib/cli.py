@@ -172,7 +172,7 @@ def cmd_diff(a):
 def cmd_snap(a):
     load_manifest()
     require_not_running()
-    snapshot(a.label or "manual")
+    snapshot(" ".join(a.label) or "manual")
 
 
 def cmd_list(a):
@@ -322,7 +322,7 @@ def main():
     s.set_defaults(fn=cmd_pull)
 
     s = sub.add_parser("snap", help="take a snapshot")
-    s.add_argument("-m", "--label", help="snapshot label (default: manual)")
+    s.add_argument("label", nargs="*", metavar="LABEL", help="snapshot label, quoted or not (default: manual)")
     s.set_defaults(fn=cmd_snap)
 
     sub.add_parser("list", help="list snapshots").set_defaults(fn=cmd_list)
@@ -361,7 +361,8 @@ def main():
     s.set_defaults(fn=cmd_dds)
 
     s = sub.add_parser("shortcut", help="put a 'RimWorld (Stable)' launcher on your desktop")
-    s.add_argument("--path", help="write the shortcut (.desktop, or .lnk on Windows) here instead of the Desktop")
+    s.add_argument("path", nargs="?", metavar="FILE",
+                   help="write the shortcut (.desktop, or .lnk on Windows) here instead of the Desktop")
     s.add_argument("--force", action="store_true", help="overwrite an existing shortcut")
     s.add_argument("--gui", action="store_true", help="make a 'Rimstable' launcher for the manager window instead")
     s.set_defaults(fn=cmd_shortcut)
