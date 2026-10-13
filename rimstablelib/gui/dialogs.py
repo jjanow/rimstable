@@ -102,7 +102,7 @@ class FreezeDialog(Dialog):
         if self.force.isChecked():
             a.append("--force")
         if self.label.text().strip():
-            a += ["--label", self.label.text().strip()]
+            a.append(self.label.text().strip())
         return a
 
 

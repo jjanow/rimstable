@@ -76,7 +76,7 @@ def cmd_freeze(a):
         "active": cfg["active"],
         "mods": [mod_record(m, times) for m in mods],
     })
-    snapshot(a.label or ("first freeze" if first else "refreeze"))
+    snapshot(" ".join(a.label) or ("first freeze" if first else "refreeze"))
     print(f"frozen: {len(mods)} mods, game {game_info(GAME_SRC, CFG_SRC)['revision']}")
     print(launch_hint())
 
@@ -308,7 +308,8 @@ def main():
     s.add_argument("--userdata", action="store_true", help="on refreeze, also replace config AND saves from Steam")
     s.add_argument("--allow-missing", action="store_true", help="freeze even if some active mods are not on disk")
     s.add_argument("--force", action="store_true", help="ignore the Steam-is-updating check")
-    s.add_argument("-m", "--label", help="snapshot label")
+    s.add_argument("label", nargs="*", metavar="LABEL",
+                   help="label for the snapshot taken after the freeze (default: first freeze / refreeze)")
     s.set_defaults(fn=cmd_freeze)
 
     s = sub.add_parser("diff", help="what changed on Steam since the freeze")

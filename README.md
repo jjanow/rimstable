@@ -81,7 +81,7 @@ Run with no arguments, or `-h` after any command (`rimstable prune -h`), for bui
 | `shortcut` | create a desktop launcher |
 | `gui` | open the manager window (see above) |
 
-### `freeze [--userdata] [--allow-missing] [--force] [-m LABEL]`
+### `freeze [LABEL] [--userdata] [--allow-missing] [--force]`
 
 The first run copies the game, every active Workshop mod, and your config and saves into the
 stable root. Later runs ("refreezes") take a snapshot, then bring the game and mods up to
@@ -89,13 +89,14 @@ date with Steam, remove mods that are no longer active, and copy Steam's `ModsCo
 (load order). They add settings files only for mods that are new to the stable copy.
 Stable saves and existing mod settings are left alone. Steam's Missile Girl/Gagarin XML cache
 (`MissileGirl/Cache`) is never copied: it records Steam paths and would force a rebuild.
+`LABEL` names the snapshot taken after the freeze (default `first freeze` / `refreeze`), and can be
+several words, quoted or not.
 
 | option | effect |
 |---|---|
 | `--userdata` | on a refreeze, replace all stable config **and saves** with Steam's (they're in the pre-refreeze snapshot if you need them back) |
 | `--allow-missing` | freeze even if some active mods aren't on disk (unsubscribed, still downloading). Without it, freeze stops and lists them |
 | `--force` | skip the "Steam is mid-update" check |
-| `-m`, `--label LABEL` | label for the snapshot taken after the freeze (default `first freeze` / `refreeze`) |
 
 ### `diff`
 
@@ -146,7 +147,7 @@ Snapshots are taken automatically, so they count toward `N`:
 | command | snapshot(s) taken |
 |---|---|
 | `freeze` (first run) | `first freeze` after copying |
-| `freeze` (refreeze) | `pre-refreeze` before, then `refreeze` (or your `-m` label) after |
+| `freeze` (refreeze) | `pre-refreeze` before, then `refreeze` (or your label) after |
 | `pull` | `pre-pull <mod name>` before (`pre-pull all (N mods)` with no mod named) |
 | `restore` | `pre-restore <id>` before |
 | `snap` | `manual` (or your label) |
