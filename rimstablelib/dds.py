@@ -3,7 +3,7 @@
 RimWorld loads Foo.dds instead of Foo.png when both sit next to each other, which skips PNG decoding and
 runtime DXT compression (measured: texture loading 63s -> 9s with ~250 mods). Every DDS rimstable creates is
 recorded in a ledger together with the PNG it came from, so rimstable can tell its files from DDS a mod ships,
-regenerate stale ones after a mod update, keep them through freeze/pull, and remove only its own on --clean.
+regenerate stale ones after a mod update, keep them through freeze/pull, and remove only its own on `dds clean`.
 
 Ledgers: stable -> game/Mods/.rimstable-dds.json (inside snapshots, survives refreeze since Mods/ is not
 mirrored as a whole); steam -> <root>/dds-steam.json (never written inside Steam's folders).

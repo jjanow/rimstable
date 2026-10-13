@@ -72,17 +72,14 @@ class FreezeDialog(Dialog):
         self.body.addSpacing(4)
         self.userdata = QCheckBox("Replace stable config and saves with Steam's")
         self.warn = label("Your stable saves and settings will be overwritten. They stay in the "
-                          "pre-refreeze snapshot if you need them back.", wrap=True)
+                          "pre-userdata snapshot if you need them back.", wrap=True)
         set_prop(self.warn, "tone", "danger")
         self.warn.hide()
         self.userdata.toggled.connect(self._userdata_toggled)
         if not first:
             self.body.addWidget(self.userdata)
             self.body.addWidget(self.warn)
-        self.allow_missing = QCheckBox("Freeze even if some active mods aren't on disk")
-        self.allow_missing.setToolTip("Unsubscribed or still downloading. Without this, freeze stops and lists them.")
         self.force = QCheckBox("Skip the “Steam is mid-update” check")
-        self.body.addWidget(self.allow_missing)
         self.body.addWidget(self.force)
         self.add_ok("Freeze" if first else "Refreeze", icon="snow")
 
@@ -95,15 +92,15 @@ class FreezeDialog(Dialog):
 
     def args(self):
         a = ["freeze"]
-        if self.userdata.isChecked():
-            a.append("--userdata")
-        if self.allow_missing.isChecked():
-            a.append("--allow-missing")
         if self.force.isChecked():
-            a.append("--force")
+            a.append("-force")
         if self.label.text().strip():
             a.append(self.label.text().strip())
         return a
+
+    def then(self):
+        """The command to run after a successful refreeze, if any."""
+        return ["userdata"] if self.userdata.isChecked() else None
 
 
 class SnapshotDialog(Dialog):
@@ -241,9 +238,7 @@ class DdsDialog(Dialog):
         self.adjustSize()
 
     def args(self):
-        a = ["dds", "--target", self._key()]
-        if self.clean.isChecked():
-            a.append("--clean")
-        elif self.force.isChecked() and "steam" in self._targets():
-            a.append("--force")
+        a = ["dds"] + (["clean"] if self.clean.isChecked() else []) + [self._key()]
+        if not self.clean.isChecked() and self.force.isChecked() and "steam" in self._targets():
+            a.append("-force")
         return a

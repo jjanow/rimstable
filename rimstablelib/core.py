@@ -199,7 +199,7 @@ def require_steam_idle(force):
         if m and m.group(1) != "0":
             busy.append(f"workshop {key}={m.group(1)}")
     if busy and not force:
-        die("Steam looks mid-update: " + "; ".join(busy) + " (wait, or pass --force)")
+        die("Steam looks mid-update: " + "; ".join(busy) + " (wait, or add -force)")
 
 
 def make_writable(p):

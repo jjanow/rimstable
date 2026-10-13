@@ -23,12 +23,12 @@ next to the script, and `rimstable gui` picks it up without needing to be activa
 python3 -m venv ~/repos/rimstable/.venv                 # Windows: py -m venv path\to\rimstable\.venv
 ~/repos/rimstable/.venv/bin/pip install PySide6          # Windows: path\to\rimstable\.venv\Scripts\pip install PySide6
 ~/repos/rimstable/rimstable gui
-~/repos/rimstable/rimstable shortcut --gui               # optional: a "Rimstable" desktop launcher
+~/repos/rimstable/rimstable shortcut gui                 # optional: a "Rimstable" desktop launcher
 ```
 
 The window only reads files itself. Every change runs the matching command (`rimstable freeze`, `pull`,
 `snap`, `restore`, `prune`, `shortcut`, `dds`) as a child process, so the checks below apply unchanged, and
-the window asks before anything destructive (restore, prune, refreeze with `--userdata`, removing DDS). Play starts
+the window asks before anything destructive (restore, prune, replacing saves with `userdata`, removing DDS). Play starts
 `rimstable launch` detached, so closing the window doesn't close the game.
 
 The code is in `rimstablelib/`: `core.py` (detection, copying, restic, safety checks), `dds.py` (todds
@@ -69,6 +69,7 @@ Run with no arguments, or `-h` after any command (`rimstable prune -h`), for bui
 | command | what it does |
 |---|---|
 | `freeze` | build or refresh the stable copy from the Steam install |
+| `userdata` | replace the stable config and saves with Steam's |
 | `diff` | show what changed on Steam since the last freeze |
 | `pull [mod]` | update every changed mod from Steam, or just the named one |
 | `snap` | take a snapshot |
@@ -81,7 +82,7 @@ Run with no arguments, or `-h` after any command (`rimstable prune -h`), for bui
 | `shortcut` | create a desktop launcher |
 | `gui` | open the manager window (see above) |
 
-### `freeze [LABEL] [--userdata] [--allow-missing] [--force]`
+### `freeze [LABEL] [-force]`
 
 The first run copies the game, every active Workshop mod, and your config and saves into the
 stable root. Later runs ("refreezes") take a snapshot, then bring the game and mods up to
@@ -90,13 +91,17 @@ date with Steam, remove mods that are no longer active, and copy Steam's `ModsCo
 Stable saves and existing mod settings are left alone. Steam's Missile Girl/Gagarin XML cache
 (`MissileGirl/Cache`) is never copied: it records Steam paths and would force a rebuild.
 `LABEL` names the snapshot taken after the freeze (default `first freeze` / `refreeze`), and can be
-several words, quoted or not.
+several words, quoted or not. `-force` skips the "Steam is mid-update" check.
 
-| option | effect |
-|---|---|
-| `--userdata` | on a refreeze, replace all stable config **and saves** with Steam's (they're in the pre-refreeze snapshot if you need them back) |
-| `--allow-missing` | freeze even if some active mods aren't on disk (unsubscribed, still downloading). Without it, freeze stops and lists them |
-| `--force` | skip the "Steam is mid-update" check |
+Active mods that aren't on disk (unsubscribed, still downloading) don't stop the freeze. They're
+listed as a warning. On a refreeze, a stable copy of such a mod is kept as it is; on the first
+freeze, it's skipped.
+
+### `userdata`
+
+Takes a `pre-userdata` snapshot, then replaces all stable config **and saves** with Steam's. The
+old ones stay in that snapshot if you need them back. To refreeze and take Steam's saves, run
+`freeze` and then `userdata`.
 
 ### `diff`
 
@@ -108,13 +113,13 @@ Read-only. Compares the stable copy with the Steam install and shows:
 - differences in the active mod list
 - how many stable mods support the Steam game's version (e.g. 1.7)
 
-### `pull [mod] [--force]`
+### `pull [mod] [-force]`
 
 Takes a snapshot, then copies one mod from the Workshop folder into the stable copy.
 `<mod>` can be an exact packageId or Workshop id, or part of the mod's name or packageId.
 It has to match exactly one mod, or pull lists the candidates and stops. Pull doesn't change the
 load order. If the mod isn't active in the stable copy, enable it in the in-game mod manager.
-`--force` skips the "Steam is mid-update" check.
+`-force` skips the "Steam is mid-update" check.
 
 With no `<mod>`, pull updates every stable mod that `diff` lists as updated on Steam, after a single snapshot.
 It doesn't add Workshop mods the stable copy doesn't have, and leaves mods that are no longer on Steam
@@ -148,6 +153,7 @@ Snapshots are taken automatically, so they count toward `N`:
 |---|---|
 | `freeze` (first run) | `first freeze` after copying |
 | `freeze` (refreeze) | `pre-refreeze` before, then `refreeze` (or your label) after |
+| `userdata` | `pre-userdata` before |
 | `pull` | `pre-pull <mod name>` before (`pre-pull all (N mods)` with no mod named) |
 | `restore` | `pre-restore <id>` before |
 | `snap` | `manual` (or your label) |
@@ -162,7 +168,7 @@ deletes nothing.
 Shows the stable root, freeze time, game version, mod count, snapshot count with the latest
 snapshot, how many generated DDS each target has (or `off`), and whether RimWorld is running.
 
-### `dds [MOD ...] [--target stable|steam|both] [--clean] [-n] [--force]`
+### `dds [check] [clean] [stable|steam|both] [MOD ...] [-force]`
 
 Encodes each mod's `Textures/**/*.png` as DDS with [todds](https://github.com/todds-encoder/todds).
 RimWorld loads `Foo.dds` instead of `Foo.png` when both exist, which skips PNG decoding and
@@ -170,14 +176,17 @@ compression at startup. With ~250 mods this cut texture loading from 63s to 9s, 
 the startup. The first full run takes a few minutes and roughly doubles the size of the mods
 folder (2 GB to 4 GB here).
 
-- `--target stable` (default) is the stable copy, `steam` is the Steam install's active mods
+- `stable` (default) is the stable copy, `steam` is the Steam install's active mods
   (Workshop and local `Mods/`), and `both` is both.
 - `MOD ...` limits the run to some mod folders (Workshop id) or packageIds.
 - Re-runs only encode new PNGs and PNGs that changed since their DDS was made.
 - PNGs whose width or height isn't a multiple of 4 are skipped. Unity refuses block-compressed
   DDS of that size and the texture would go missing, so those keep loading as PNG.
-- `--clean` deletes the generated DDS. For all mods it also turns DDS off for that target.
-- `-n`, `--dry-run` only reports counts.
+- `clean` deletes the generated DDS. For all mods it also turns DDS off for that target.
+- `check` only reports counts (`dds check clean steam` reports what `dds clean steam` would delete).
+- `-force` skips the "Steam is mid-update" check.
+- The words go in that order, before any `MOD`. A mod folder literally named `check`, `clean`,
+  `stable`, `steam` or `both` can't be given as a `MOD`; use its packageId.
 
 Every DDS rimstable makes is recorded with the PNG it came from, in
 `game/Mods/.rimstable-dds.json` (stable, part of snapshots) and `dds-steam.json` in the stable
@@ -186,7 +195,7 @@ root (Steam). Only recorded files are ever replaced or deleted, so DDS that mods
 make mods look updated.
 
 Once enabled for the stable copy, `freeze` and `pull` keep the existing DDS and re-encode only
-what changed. The Steam install has no hook. Run `rimstable dds --target steam` again after
+what changed. The Steam install has no hook. Run `rimstable dds steam` again after
 Workshop updates.
 
 The todds binary is looked up via `RIMSTABLE_TODDS`, then `PATH`, then `tools/todds`
@@ -200,15 +209,11 @@ passed to RimWorld, e.g. `rimstable launch -- -popupwindow`. The previous `Playe
 kept as `Player-prev.log`. Before starting, it installs the NoSteamNag helper mod and activates
 it after Harmony if it isn't already active.
 
-### `shortcut [FILE] [--force] [--gui]`
+### `shortcut [gui] [FILE] [-force]`
 
 Creates a "RimWorld (Stable)" launcher on the Desktop: a `.desktop` file on Linux, a `.lnk` on
-Windows. Give a `FILE` to write it there instead.
-
-| option | effect |
-|---|---|
-| `--force` | overwrite an existing shortcut |
-| `--gui` | create a "Rimstable" launcher for the manager window instead |
+Windows. `shortcut gui` creates a "Rimstable" launcher for the manager window instead. Give a
+`FILE` to write it there instead of the Desktop. An existing shortcut is only replaced with `-force`.
 
 ### `gui`
 
@@ -217,9 +222,9 @@ or prints how to create it.
 
 ### Safety checks
 
-`freeze`, `pull`, `restore`, `snap`, `prune`, `launch` and `dds` (except `-n`) won't run while
-RimWorld is running. `freeze`, `pull` and `dds --target steam` also won't run while Steam is updating
-RimWorld or a mod; `--force` skips that check. In Steam's folders, `dds` only creates `.dds` files
+`freeze`, `pull`, `restore`, `snap`, `prune`, `launch` and `dds` (except `dds check`) won't run while
+RimWorld is running. `freeze`, `pull` and `dds steam` also won't run while Steam is updating
+RimWorld or a mod; `-force` skips that check. In Steam's folders, `dds` only creates `.dds` files
 next to PNGs and only deletes ones it recorded; nothing else there is ever written.
 
 ## DLC workflow

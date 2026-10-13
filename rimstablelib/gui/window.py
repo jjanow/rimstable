@@ -15,7 +15,8 @@ from .widgets import Banner, Pill, button, label, refresh_icons
 
 NAV = [("overview", "Overview"), ("mods", "Mods"), ("snapshots", "Snapshots"), ("activity", "Activity")]
 TITLES = {"freeze": "Freezing", "pull": "Pulling", "snap": "Taking a snapshot", "restore": "Restoring",
-          "prune": "Pruning snapshots", "shortcut": "Creating a shortcut", "dds": "Encoding textures"}
+          "prune": "Pruning snapshots", "userdata": "Replacing config and saves", "shortcut": "Creating a shortcut",
+          "dds": "Encoding textures"}
 
 
 def steam_problem():
@@ -75,6 +76,7 @@ class MainWindow(QMainWindow):
         self.cmd_started = 0.0
 
         self.runner = CommandRunner(self)
+        self.then = None
         root = QWidget()
         self.setCentralWidget(root)
         lay = QHBoxLayout(root)
@@ -291,9 +293,12 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------ commands
 
-    def run(self, args):
+    def run(self, args, then=None):
+        """then: a second command to run if this one succeeds (the runner takes one at a time)."""
         if not self.runner.run(args):
             self.banner.show_state("error", "Another command is still running")
+            return
+        self.then = then
 
     def _cmd_started(self, args):
         self.cmd_started = time.monotonic()
@@ -318,11 +323,14 @@ class MainWindow(QMainWindow):
         self._update_controls()
         self.refresh()
         self.poll()
+        then, self.then = self.then, None
+        if ok and then:
+            self.run(then)
 
     def _title(self, args):
         if args == ["pull"]:
             return "Updating mods"
-        if args[0] == "dds" and "--clean" in args:
+        if args[:2] == ["dds", "clean"]:
             return "Removing generated DDS"
         return TITLES.get(args[0], args[0])
 
@@ -330,7 +338,7 @@ class MainWindow(QMainWindow):
         first = not self.state.get("manifest")
         d = dialogs.FreezeDialog(self, first)
         if d.exec():
-            self.run(d.args())
+            self.run(d.args(), d.then())
 
     def encode_textures(self):
         d = dialogs.DdsDialog(self, self.dds_info)
@@ -385,12 +393,12 @@ class MainWindow(QMainWindow):
 
     def make_shortcut(self, gui):
         dest = core.desktop_dir() / core.shortcut_name(gui)
-        args = ["shortcut"] + (["--gui"] if gui else [])
+        args = ["shortcut"] + (["gui"] if gui else [])
         if dest.exists():
             if not dialogs.confirm(self, "Replace the shortcut?", f"{dest} already exists.", "Replace",
                                    icon_name="shortcut"):
                 return
-            args.append("--force")
+            args.append("-force")
         self.run(args)
 
     def open_path(self, p):

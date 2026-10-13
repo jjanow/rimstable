@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 from . import core, dds
@@ -28,9 +29,14 @@ def cmd_freeze(a):
 
     cfg = read_modsconfig(CFG_SRC)
     mods, missing = resolve_active(cfg["active"])
-    if missing and not a.allow_missing:
-        die("active mods not found on disk (unsubscribed? still downloading?):\n  "
-            + "\n  ".join(missing) + "\npass --allow-missing to freeze without them")
+    # a mod missing from Steam keeps its stable copy (and manifest record) instead of being removed
+    old = {} if first else {r["packageId"]: r for r in load_manifest()["mods"]}
+    kept = [old[p] for p in missing if p in old and (MODS / old[p]["folder"]).is_dir()]
+    if missing:
+        kept_ids = {r["packageId"] for r in kept}
+        print("warning: active mods not found on disk (unsubscribed? still downloading?):")
+        for p in missing:
+            print(f"  {p}  ({'keeping the stable copy' if p in kept_ids else 'skipped'})")
 
     ROOT.mkdir(parents=True, exist_ok=True)
     MARKER.touch()
@@ -42,7 +48,7 @@ def cmd_freeze(a):
     MODS.mkdir(exist_ok=True)
 
     print(f"[mods] {len(mods)} mods -> {MODS}")
-    keep = {HELPER_FOLDER}
+    keep = {HELPER_FOLDER} | {r["folder"] for r in kept}
     for mod in mods:
         folder = Path(mod["dir"]).name
         keep.add(folder)
@@ -54,9 +60,9 @@ def cmd_freeze(a):
     if dds.enabled(dds.STABLE):
         dds.convert(dds.STABLE)
 
-    if first or a.userdata:
-        print(f"[userdata] {CFG_SRC} -> {USERDATA}" + (" (replacing, saves included)" if not first else ""))
-        sync_into(CFG_SRC, USERDATA, delete=not first, exclude=USERDATA_SKIP)
+    if first:
+        print(f"[userdata] {CFG_SRC} -> {USERDATA}")
+        sync_into(CFG_SRC, USERDATA, delete=False, exclude=USERDATA_SKIP)
     else:
         # keep stable saves/settings; take Steam's load order and settings for mods new to stable
         assert_dest(USERDATA / "Config")
@@ -74,11 +80,20 @@ def cmd_freeze(a):
         "frozen_at": dt.datetime.now().isoformat(timespec="seconds"),
         "game": game_info(GAME_SRC, CFG_SRC),
         "active": cfg["active"],
-        "mods": [mod_record(m, times) for m in mods],
+        "mods": [mod_record(m, times) for m in mods] + kept,
     })
     snapshot(" ".join(a.label) or ("first freeze" if first else "refreeze"))
     print(f"frozen: {len(mods)} mods, game {game_info(GAME_SRC, CFG_SRC)['revision']}")
     print(launch_hint())
+
+
+def cmd_userdata(a):
+    load_manifest()
+    require_not_running()
+    snapshot("pre-userdata")
+    print(f"[userdata] {CFG_SRC} -> {USERDATA} (replacing, saves included)")
+    sync_into(CFG_SRC, USERDATA, delete=True, exclude=USERDATA_SKIP)
+    print("stable config and saves replaced with Steam's; the pre-userdata snapshot has the old ones")
 
 
 def find_mod(query, records):
@@ -244,27 +259,39 @@ def cmd_launch(a):
     os.execve(str(exe), argv, dict(os.environ, LC_ALL="C"))
 
 
+def leading(words, choices):
+    """Pop words[0] if it is one of choices (the keyword part of `dds` and `shortcut` arguments)."""
+    return words.pop(0) if words and words[0] in choices else None
+
+
 def cmd_dds(a):
+    words = list(a.words)
+    dry_run = bool(leading(words, ["check"]))
+    clean = bool(leading(words, ["clean"]))
+    targets = dds.TARGETS[leading(words, dds.TARGETS) or "stable"]
     dds.require_root()
-    if not a.dry_run:
+    if not dry_run:
         require_not_running()
-    targets = dds.TARGETS[a.target]
-    if dds.STEAM in targets and not a.dry_run:
+    if dds.STEAM in targets and not dry_run:
         require_steam_idle(a.force)
     for t in targets:
-        dirs = dds.mod_dirs(t, a.mods) if a.mods else None
-        if a.clean:
-            dds.clean(t, dirs, a.dry_run)
+        dirs = dds.mod_dirs(t, words) if words else None
+        if clean:
+            dds.clean(t, dirs, dry_run)
         else:
-            dds.convert(t, dirs, a.dry_run)
+            dds.convert(t, dirs, dry_run)
 
 
 def cmd_shortcut(a):
+    words = list(a.words)
+    gui = bool(leading(words, ["gui"]))
+    if len(words) > 1:
+        die("give at most one FILE")
     load_manifest()
-    dest = Path(a.path) if a.path else desktop_dir() / shortcut_name(a.gui)
+    dest = Path(words[0]) if words else desktop_dir() / shortcut_name(gui)
     if dest.exists() and not a.force:
-        die(f"{dest} already exists (pass --force to overwrite)")
-    write_shortcut(dest, gui=a.gui)
+        die(f"{dest} already exists (add -force to overwrite)")
+    write_shortcut(dest, gui=gui)
     print(f"wrote {dest}")
 
 
@@ -299,18 +326,26 @@ def venv_pip():
     return APP_DIR / ".venv" / ("Scripts/pip.exe" if WINDOWS else "bin/pip")
 
 
-def main():
-    p = argparse.ArgumentParser(prog="rimstable", description=core.__doc__.splitlines()[0],
+class Parser(argparse.ArgumentParser):
+    """Help is -h or -help; rimstable has no double-dash options."""
+    def __init__(self, *args, **kw):
+        super().__init__(*args, add_help=False, **kw)
+        self.add_argument("-h", "-help", action="help", help="show this help and exit")
+
+
+def build_parser():
+    p = Parser(prog="rimstable", description=core.__doc__.splitlines()[0],
                                 epilog=launch_hint(), formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("freeze", help="build/refresh the stable install from the Steam install")
-    s.add_argument("--userdata", action="store_true", help="on refreeze, also replace config AND saves from Steam")
-    s.add_argument("--allow-missing", action="store_true", help="freeze even if some active mods are not on disk")
-    s.add_argument("--force", action="store_true", help="ignore the Steam-is-updating check")
     s.add_argument("label", nargs="*", metavar="LABEL",
                    help="label for the snapshot taken after the freeze (default: first freeze / refreeze)")
+    s.add_argument("-force", action="store_true", help="ignore the Steam-is-updating check")
     s.set_defaults(fn=cmd_freeze)
+
+    s = sub.add_parser("userdata", help="replace the stable config AND saves with Steam's (snapshots first)")
+    s.set_defaults(fn=cmd_userdata)
 
     s = sub.add_parser("diff", help="what changed on Steam since the freeze")
     s.set_defaults(fn=cmd_diff)
@@ -319,7 +354,7 @@ def main():
     s.add_argument("mod", nargs="?",
                    help="packageId, Workshop id, or part of the name; omit to update every stable mod "
                         "that changed on Steam since the freeze, after one snapshot")
-    s.add_argument("--force", action="store_true", help="ignore the Steam-is-updating check")
+    s.add_argument("-force", action="store_true", help="ignore the Steam-is-updating check")
     s.set_defaults(fn=cmd_pull)
 
     s = sub.add_parser("snap", help="take a snapshot")
@@ -347,30 +382,42 @@ def main():
     s.set_defaults(fn=cmd_launch)
 
     s = sub.add_parser("dds", help="pre-encode mod textures as DDS with todds (much faster startup)",
-                       description="Encode each mod's Textures/*.png as DDS with todds, which RimWorld loads "
+                       usage="rimstable dds [check] [clean] [stable|steam|both] [MOD ...] [-force]",
+                       formatter_class=argparse.RawDescriptionHelpFormatter,
+                       epilog="  check                 only report what would happen\n"
+                              "  clean                 delete the generated DDS instead (for all mods this also "
+                              "turns\n                        automatic re-encoding off)\n"
+                              "  stable|steam|both     the stable copy (default), the Steam install's active mods, "
+                              "or both\n"
+                              "  MOD                   limit to these mod folders (Workshop id) or packageIds",
+                       description=textwrap.fill(
+                                   "Encode each mod's Textures/*.png as DDS with todds, which RimWorld loads "
                                    "instead of the PNG. Only DDS that rimstable generated are ever replaced or "
                                    "deleted; DDS that mods ship are left alone. Once enabled for the stable copy, "
                                    "freeze and pull re-encode changed mods automatically; for Steam, run this again "
-                                   "after Workshop updates. Re-runs only encode what is new or changed.")
-    s.add_argument("mods", nargs="*", help="limit to these mod folders (Workshop id) or packageIds")
-    s.add_argument("--target", choices=["stable", "steam", "both"], default="stable",
-                   help="the stable copy (default), the Steam install's active mods, or both")
-    s.add_argument("--clean", action="store_true",
-                   help="delete the generated DDS instead (for all mods this also turns automatic re-encoding off)")
-    s.add_argument("-n", "--dry-run", action="store_true", help="only report what would happen")
-    s.add_argument("--force", action="store_true", help="ignore the Steam-is-updating check")
+                                   "after Workshop updates. Re-runs only encode what is new or changed.", 79))
+    s.add_argument("words", nargs="*", help=argparse.SUPPRESS)
+    s.add_argument("-force", action="store_true", help="ignore the Steam-is-updating check")
     s.set_defaults(fn=cmd_dds)
 
-    s = sub.add_parser("shortcut", help="put a 'RimWorld (Stable)' launcher on your desktop")
-    s.add_argument("path", nargs="?", metavar="FILE",
-                   help="write the shortcut (.desktop, or .lnk on Windows) here instead of the Desktop")
-    s.add_argument("--force", action="store_true", help="overwrite an existing shortcut")
-    s.add_argument("--gui", action="store_true", help="make a 'Rimstable' launcher for the manager window instead")
+    s = sub.add_parser("shortcut", help="put a 'RimWorld (Stable)' launcher on your desktop",
+                       usage="rimstable shortcut [gui] [FILE] [-force]",
+                       formatter_class=argparse.RawDescriptionHelpFormatter,
+                       epilog="  gui                   make a 'Rimstable' launcher for the manager window instead\n"
+                              "  FILE                  write the shortcut (.desktop, or .lnk on Windows) here "
+                              "instead of the Desktop")
+    s.add_argument("words", nargs="*", help=argparse.SUPPRESS)
+    s.add_argument("-force", action="store_true", help="overwrite an existing shortcut")
     s.set_defaults(fn=cmd_shortcut)
 
     s = sub.add_parser("gui", help="open the manager window (needs PySide6)")
     s.set_defaults(fn=cmd_gui)
 
+    return p
+
+
+def main():
+    p = build_parser()
     if sys.stdout:  # None under pythonw (Windows shortcut)
         sys.stdout.reconfigure(line_buffering=True, errors="replace")
     if sys.stderr:
