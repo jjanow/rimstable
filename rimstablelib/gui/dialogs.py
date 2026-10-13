@@ -159,7 +159,7 @@ class PruneDialog(Dialog):
             + "</span>")
 
     def args(self):
-        return ["prune", "--keep", str(self.keep.value())]
+        return ["prune", str(self.keep.value())]
 
 
 class DdsDialog(Dialog):

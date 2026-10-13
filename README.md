@@ -134,7 +134,7 @@ and `manifest.json` back to snapshot `<id>`. Files that aren't in that snapshot 
 `<id>` is any unique prefix of an id from `rimstable list`. If the restore was a mistake,
 restore the `pre-restore` snapshot.
 
-### `prune [--keep N]`
+### `prune [N]`
 
 Deletes all snapshots except the newest `N` (default **20**), counted by time and ignoring
 labels. The data they used is then freed on disk. Prune never runs by itself;
@@ -150,9 +150,9 @@ Snapshots are taken automatically, so they count toward `N`:
 | `restore` | `pre-restore <id>` before |
 | `snap` | `manual` (or your `-m` label) |
 
-For example, with 25 snapshots, `rimstable prune --keep 5` deletes the oldest 20 and keeps
+For example, with 25 snapshots, `rimstable prune 5` deletes the oldest 20 and keeps
 the newest 5. The snapshot you care about can be pushed out by later automatic ones, so check
-`rimstable list` first. Prune can't be undone. `N` must be at least 1; `--keep 0` is refused and
+`rimstable list` first. Prune can't be undone. `N` must be at least 1; `prune 0` is refused and
 deletes nothing.
 
 ### `status`

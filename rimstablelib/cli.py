@@ -205,7 +205,7 @@ def cmd_restore(a):
 
 def cmd_prune(a):
     if a.keep < 1:
-        die("--keep must be at least 1")
+        die("N must be at least 1")
     require_not_running()
     ensure_repo()
     restic("forget", "--tag", "rimstable", "--keep-last", str(a.keep), "--prune")
@@ -337,7 +337,7 @@ def main():
                        description="Delete every snapshot except the newest N (by time, any label) and free "
                                    "their disk space. Automatic pre-pull/pre-restore/pre-refreeze snapshots "
                                    "count toward N. Cannot be undone; check 'rimstable list' first.")
-    s.add_argument("--keep", type=int, default=20, metavar="N",
+    s.add_argument("keep", type=int, nargs="?", default=20, metavar="N",
                    help="how many of the newest snapshots to keep (default: 20, minimum 1)")
     s.set_defaults(fn=cmd_prune)
 
