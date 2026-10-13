@@ -39,9 +39,16 @@ class _Task(QRunnable):
         try:
             result = self.fn()
         except Exception as e:  # shown to the user; the GUI must not die on a bad Steam folder
-            self.signals.failed.emit(error_text(e))
+            self._emit(self.signals.failed, error_text(e))
         else:
-            self.signals.done.emit(result)
+            self._emit(self.signals.done, result)
+
+    @staticmethod
+    def _emit(signal, value):
+        try:
+            signal.emit(value)
+        except RuntimeError:  # the GUI quit while this ran; its signal object is gone and nobody is listening
+            pass
 
 
 _live = set()  # keeps signal objects alive until their task reports back
