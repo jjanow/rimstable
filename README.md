@@ -70,7 +70,7 @@ Run with no arguments, or `-h` after any command (`rimstable prune -h`), for bui
 |---|---|
 | `freeze` | build or refresh the stable copy from the Steam install |
 | `diff` | show what changed on Steam since the last freeze |
-| `pull <mod>` | update a single mod from Steam (`--all`: every changed mod) |
+| `pull [mod]` | update every changed mod from Steam, or just the named one |
 | `snap` | take a snapshot |
 | `list` | list snapshots |
 | `restore <id>` | roll the stable copy back to a snapshot |
@@ -107,7 +107,7 @@ Read-only. Compares the stable copy with the Steam install and shows:
 - differences in the active mod list
 - how many stable mods support the Steam game's version (e.g. 1.7)
 
-### `pull <mod> [--force]`, `pull --all [--force]`
+### `pull [mod] [--force]`
 
 Takes a snapshot, then copies one mod from the Workshop folder into the stable copy.
 `<mod>` can be an exact packageId or Workshop id, or part of the mod's name or packageId.
@@ -115,7 +115,7 @@ It has to match exactly one mod, or pull lists the candidates and stops. Pull do
 load order. If the mod isn't active in the stable copy, enable it in the in-game mod manager.
 `--force` skips the "Steam is mid-update" check.
 
-`--all` updates every stable mod that `diff` lists as updated on Steam, after a single snapshot.
+With no `<mod>`, pull updates every stable mod that `diff` lists as updated on Steam, after a single snapshot.
 It doesn't add Workshop mods the stable copy doesn't have, and leaves mods that are no longer on Steam
 alone. The manager window's "Update all" button runs this.
 
@@ -146,7 +146,7 @@ Snapshots are taken automatically, so they count toward `N`:
 |---|---|
 | `freeze` (first run) | `first freeze` after copying |
 | `freeze` (refreeze) | `pre-refreeze` before, then `refreeze` (or your `-m` label) after |
-| `pull` | `pre-pull <mod name>` before (`pre-pull all (N mods)` with `--all`) |
+| `pull` | `pre-pull <mod name>` before (`pre-pull all (N mods)` with no mod named) |
 | `restore` | `pre-restore <id>` before |
 | `snap` | `manual` (or your `-m` label) |
 

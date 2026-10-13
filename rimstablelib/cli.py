@@ -90,13 +90,11 @@ def find_mod(query, records):
 
 
 def cmd_pull(a):
-    if a.all == bool(a.mod):
-        die("name one mod to pull, or pass --all (not both)")
     require_not_running()
     require_steam_idle(a.force)
     man = load_manifest()
     ws = index_mods(WS_SRC)
-    if a.all:
+    if not a.mod:
         return pull_all(man, ws)
     candidates = [{"packageId": pid, "folder": m["dir"].name, "name": m["name"]} for pid, m in ws.items()]
     hits = find_mod(a.mod, candidates)
@@ -316,10 +314,10 @@ def main():
     s = sub.add_parser("diff", help="what changed on Steam since the freeze")
     s.set_defaults(fn=cmd_diff)
 
-    s = sub.add_parser("pull", help="update one mod, or all changed mods, from Steam (snapshots first)")
-    s.add_argument("mod", nargs="?", help="packageId, Workshop id, or part of the name")
-    s.add_argument("--all", action="store_true",
-                   help="update every stable mod that changed on Steam since the freeze, after one snapshot")
+    s = sub.add_parser("pull", help="update all changed mods, or one named mod, from Steam (snapshots first)")
+    s.add_argument("mod", nargs="?",
+                   help="packageId, Workshop id, or part of the name; omit to update every stable mod "
+                        "that changed on Steam since the freeze, after one snapshot")
     s.add_argument("--force", action="store_true", help="ignore the Steam-is-updating check")
     s.set_defaults(fn=cmd_pull)
 

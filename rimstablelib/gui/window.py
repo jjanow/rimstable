@@ -320,7 +320,7 @@ class MainWindow(QMainWindow):
         self.poll()
 
     def _title(self, args):
-        if args[:2] == ["pull", "--all"]:
+        if args == ["pull"]:
             return "Updating mods"
         if args[0] == "dds" and "--clean" in args:
             return "Removing generated DDS"
@@ -364,7 +364,7 @@ class MainWindow(QMainWindow):
                            "One \u201cpre-pull all\u201d snapshot is taken first. The load order isn't changed, "
                            "and Workshop mods that aren't in the stable copy aren't added.",
                            f"Update {len(changed)}", icon_name="download", details="\n".join(shown) + more):
-            self.run(["pull", "--all"])
+            self.run(["pull"])
 
     def restore(self, s):
         lbl = core.label_of(s) or "unlabelled"
