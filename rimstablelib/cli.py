@@ -9,7 +9,7 @@ import sys
 import textwrap
 from pathlib import Path
 
-from . import core, dds
+from . import core, dds, modver
 from .core import (
     APP_DIR, CFG_SRC, EXE_NAME, GAME, GAME_SRC, HELPER_FOLDER, MANIFEST, MARKER, MODS, ROOT, SCRIPT,
     RimstableError, USERDATA, USERDATA_SKIP, WINDOWS, assert_dest, changed_mods, desktop_dir, die,
@@ -112,7 +112,7 @@ def cmd_pull(a):
     man = load_manifest()
     ws = steam_mods()
     if not a.mod:
-        return pull_all(man, ws)
+        return pull_all(man, ws, a.anyversion)
     candidates = [{"packageId": pid, "folder": m["dir"].name, "name": m["name"]} for pid, m in ws.items()]
     hits = find_mod(a.mod, candidates)
     if len(hits) != 1:
@@ -120,6 +120,10 @@ def cmd_pull(a):
             ("".join(f"\n  {h['folder']}  {h['packageId']}  {h['name']}" for h in hits[:20])))
     pid = hits[0]["packageId"]
     src = dict(ws[pid], packageId=pid)
+    probs = modver.pull_problems(src, man)
+    if probs and not a.anyversion:
+        die(f"{src['name']} ({pid}) won't work on the stable copy's RimWorld {man['game']['version_txt']}:\n  "
+            + "\n  ".join(probs) + "\nadd -anyversion to pull it anyway")
     snapshot(f"pre-pull {src['name']}")
     dst = MODS / src["dir"].name
     sync_into(src["dir"], dst, exclude=dds.sync_exclude(src["dir"], dst))
@@ -134,12 +138,25 @@ def cmd_pull(a):
         print("note: this mod is not active in the stable install; enable it in the in-game mod manager")
 
 
-def pull_all(man, ws):
-    """Update every stable mod that changed on Steam, after one snapshot. Mods new to Steam aren't added."""
+def pull_all(man, ws, anyversion=False):
+    """Update every stable mod that changed on Steam, after one snapshot. Mods new to Steam aren't added, and
+    updates that won't work on the stable copy's game version are skipped unless anyversion."""
     changed = sorted(changed_mods(man, ws), key=lambda x: x[1]["name"].lower())
     if not changed:
         print("all stable mods match Steam; nothing to pull")
         return
+    if not anyversion:
+        blocked = [(cur, probs) for _, cur in changed if (probs := modver.pull_problems(cur, man))]
+        if blocked:
+            print(f"skipping {len(blocked)} updates that won't work on the stable copy's RimWorld "
+                  f"{man['game']['version_txt']} (add -anyversion to pull them anyway):")
+            for cur, probs in blocked:
+                print(f"  {cur['name']}: " + "; ".join(probs))
+            skip = {id(cur) for cur, _ in blocked}
+            changed = [(r, cur) for r, cur in changed if id(cur) not in skip]
+            if not changed:
+                print("nothing else to pull")
+                return
     snapshot(f"pre-pull all ({len(changed)} mods)")
     times = workshop_times()
     pulled = []
@@ -168,9 +185,25 @@ def cmd_diff(a):
         t = d["times"].get(folder)
         return dt.datetime.fromtimestamp(t).strftime("%Y-%m-%d") if t else "?"
 
+    v = d["stable_target"] or "?"
     print(f"\nmods updated on Steam since freeze: {len(d['changed'])}")
+    if d["changed"]:
+        print(f"  ({v} changes = files the stable copy's RimWorld {v} loads; other = only other versions' "
+              "files or metadata)")
+    counts = {"blocked": 0, "loads": 0, "other": 0}
     for r, cur in sorted(d["changed"], key=lambda x: x[0]["name"].lower()):
-        print(f"  {r['folder']:>11}  {when(r['folder'])}  [{','.join(cur['supportedVersions'])}]  {r['name']}")
+        rv = d["review"].get(r["packageId"], {"problems": [], "loaded": ["?"]})
+        kind = "blocked" if rv["problems"] else "loads" if rv["loaded"] else "other"
+        counts[kind] += 1
+        tag = {"blocked": "CAN'T PULL", "loads": f"{v} changes", "other": "other"}[kind]
+        print(f"  {r['folder']:>11}  {when(r['folder'])}  {tag:<11} [{','.join(cur['supportedVersions'])}]  "
+              f"{r['name']}")
+        for p in rv["problems"]:
+            print(f"  {'':>11}    {p}")
+    if d["changed"]:
+        print(f"  {counts['loads']} change what {v} loads, {counts['other']} only other versions or metadata"
+              + (f", {counts['blocked']} won't work on {v} (pull skips them; -anyversion overrides)"
+                 if counts["blocked"] else ""))
     if d["gone"]:
         print(f"\nmods no longer in Steam's Workshop or local Mods/ folder (unsubscribed/removed): {len(d['gone'])}")
         for r in d["gone"]:
@@ -357,6 +390,9 @@ def build_parser():
                    help="packageId, Workshop id, or part of the name; omit to update every stable mod "
                         "that changed on Steam since the freeze, after one snapshot")
     s.add_argument("-force", action="store_true", help="ignore the Steam-is-updating check")
+    s.add_argument("-anyversion", action="store_true",
+                   help="pull even mods whose Steam version won't work on the stable copy's game version "
+                        "(About.xml doesn't list it, or a DLL is built for a newer .NET)")
     s.set_defaults(fn=cmd_pull)
 
     s = sub.add_parser("snap", help="take a snapshot")

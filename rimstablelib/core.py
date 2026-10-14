@@ -503,13 +503,24 @@ def diff_report():
     changed = changed_mods(man, ws)
     steam_active = read_modsconfig(CFG_SRC)["active"]
     stable_active = read_modsconfig(USERDATA)["active"]
+    from . import modver
+    times = workshop_times()
+    for m in ws.values():  # local Mods/ folders aren't in the workshop manifest
+        if m["dir"].name not in times:
+            times[m["dir"].name] = modver.newest_mtime(m["dir"])
+    review = modver.review(man, changed, MODS)
+    ver = modver.stable_version(man)
     return {
         "manifest": man,
         "stable_game": man["game"],
         "steam_game": steam_game,
         "target": target,
+        # the stable copy's major.minor; review: packageId -> {"problems", "loaded"} for every changed mod
+        "stable_target": modver.short(ver) if ver else None,
+        "review": review,
+        "blocked": {pid for pid, v in review.items() if v["problems"]},
         "workshop": ws,
-        "times": workshop_times(),
+        "times": times,
         "changed": changed,
         "gone": gone,
         "ready": ready,

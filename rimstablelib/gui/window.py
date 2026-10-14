@@ -362,11 +362,17 @@ class MainWindow(QMainWindow):
             self.run(["pull", row["packageId"]])
 
     def update_all(self):
-        changed = sorted((cur["name"] for _, cur in (self.diff or {}).get("changed", [])), key=str.lower)
+        d = self.diff or {}
+        blocked = d.get("blocked", set())
+        changed = sorted((cur["name"] for r, cur in d.get("changed", []) if r["packageId"] not in blocked), key=str.lower)
+        skipped = sorted((cur["name"] for r, cur in d.get("changed", []) if r["packageId"] in blocked), key=str.lower)
         if not changed or self.runner.busy:
             return
         shown = changed[:10]
         more = f"\n…and {len(changed) - len(shown)} more" if len(changed) > len(shown) else ""
+        if skipped:
+            more += (f"\n\nSkipped, won't work on {d.get('stable_target')}:\n" + "\n".join(skipped[:10])
+                     + (f"\n…and {len(skipped) - 10} more" if len(skipped) > 10 else ""))
         if dialogs.confirm(self, f"Update {len(changed)} mod{'s' if len(changed) != 1 else ''}?",
                            "Copies the current Steam version of every stable mod that changed since the freeze. "
                            "One \u201cpre-pull all\u201d snapshot is taken first. The load order isn't changed, "

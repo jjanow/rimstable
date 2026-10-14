@@ -100,7 +100,8 @@ freeze, it's skipped.
 A refreeze refuses when Steam's game is a different major.minor version (e.g. 1.7) than the stable
 copy (e.g. 1.6). Moving the stable copy to a new version isn't supported yet: RimWorld resets a mod
 list saved by another major.minor, and `launch` only knows the stable version's executable
-(`RimWorldLinux`; 1.7 runs as `RimWorld`). `pull` still works across versions.
+(`RimWorldLinux`; 1.7 runs as `RimWorld`). `pull` still works across versions, but it refuses mod
+updates that won't work on the stable copy's version (see `pull`).
 
 ### `userdata`
 
@@ -114,12 +115,14 @@ major.minor version than the stable copy: the stable game would reset Steam's mo
 Read-only. Compares the stable copy with the Steam install and shows:
 
 - the game build, and whether it changed
-- mods updated on Steam since the freeze
+- mods updated on Steam since the freeze, each marked `1.6 changes` (files the stable copy's game
+  version loads changed), `other` (only other versions' folders or metadata changed, e.g. a new `1.7/`
+  folder), or `CAN'T PULL` with the reason (see `pull`)
 - mods that are no longer in the Workshop folder or the Steam game's local `Mods/` folder
 - differences in the active mod list
 - how many stable mods support the Steam game's version (e.g. 1.7)
 
-### `pull [mod] [-force]`
+### `pull [mod] [-force] [-anyversion]`
 
 Takes a snapshot, then copies one mod from the Workshop folder, or the Steam game's local `Mods/`
 folder, into the stable copy.
@@ -128,9 +131,17 @@ It has to match exactly one mod, or pull lists the candidates and stops. Pull do
 load order. If the mod isn't active in the stable copy, enable it in the in-game mod manager.
 `-force` skips the "Steam is mid-update" check.
 
+Pull refuses a mod whose Steam version won't work on the stable copy's game version: its About.xml
+doesn't list that version (e.g. 1.6), or a DLL that version would load is built for .NET (RimWorld 1.7
+and later) while the stable game runs .NET Framework. Which folders count as loaded follows RimWorld's
+own rules: `LoadFolders.xml`, else the version folder, `Common/` and the mod root. Note that RimWorld
+falls back to the oldest version folder above its own when no older one exists, so a mod with only a
+`1.7/` folder loads it on 1.6. `-anyversion` pulls anyway.
+
 With no `<mod>`, pull updates every stable mod that `diff` lists as updated on Steam, after a single snapshot.
-It doesn't add Workshop mods the stable copy doesn't have, and leaves mods that are no longer on Steam
-alone. The manager window's "Update all" button runs this.
+It doesn't add Workshop mods the stable copy doesn't have, leaves mods that are no longer on Steam
+alone, and skips (and lists) updates that won't work on the stable copy's game version. The manager
+window's "Update all" button runs this.
 
 ### `snap [LABEL]`
 

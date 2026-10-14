@@ -287,10 +287,12 @@ class OverviewPage(Page):
         if diff is not None:
             n = len(diff["changed"])
             gone = len(diff["gone"])
-            cap = "updated on Steam since the freeze" + (f"; {gone} no longer on Steam" if gone else "")
+            blocked = len(diff["blocked"])
+            cap = ("updated on Steam since the freeze" + (f"; {gone} no longer on Steam" if gone else "")
+                   + (f"; {blocked} won't work on {diff['stable_target']}" if blocked else ""))
             self.s_updates.set(str(n), cap, "warn" if n else "ok")
             self.review_btn.setVisible(bool(n))
-            self.update_all_btn.setVisible(bool(n))
+            self.update_all_btn.setVisible(n > blocked)
             total = len(man["mods"])
             self.s_support.set(f"{diff['ready']}/{total}", f"mods list support for {diff['target']} in their "
                                "current Steam version", None, (diff["ready"], total))
@@ -362,6 +364,8 @@ def mod_rows(man, diff, failed=False):
     gone = {r["packageId"] for r in diff["gone"]} if diff else set()
     ws = diff["workshop"] if diff else {}
     times = diff["times"] if diff else {}
+    review = diff["review"] if diff else {}
+    ver = diff["stable_target"] if diff else None
     rows = []
     for r in man["mods"]:
         pid = r["packageId"]
@@ -370,13 +374,19 @@ def mod_rows(man, diff, failed=False):
             status = "update" if pid in changed else "gone" if pid in gone else "current"
         else:
             status = "unknown" if failed else "checking"
+        rv = review.get(pid, {}) if status == "update" else {}
         rows.append({"name": r["name"] or pid, "packageId": pid, "folder": r["folder"], "status": status,
-                     "versions": (cur or r)["supportedVersions"], "updated": times.get(r["folder"]) or r.get("timeupdated")})
+                     "versions": (cur or r)["supportedVersions"], "updated": times.get(r["folder"]) or r.get("timeupdated"),
+                     "problems": rv.get("problems", []), "loaded": rv.get("loaded")})
     stable = {r["packageId"] for r in man["mods"]}
     for pid, m in ws.items():
         if pid not in stable and pid != core.HELPER_ID:
+            # only the About.xml check here; pull itself also checks the DLLs
+            probs = ([f"doesn't list {ver} in supportedVersions"]
+                     if ver and m["supportedVersions"] and ver not in m["supportedVersions"] else [])
             rows.append({"name": m["name"] or pid, "packageId": pid, "folder": m["dir"].name, "status": "new",
-                         "versions": m["supportedVersions"], "updated": times.get(m["dir"].name)})
+                         "versions": m["supportedVersions"], "updated": times.get(m["dir"].name),
+                         "problems": probs, "loaded": None})
     return rows
 
 
@@ -413,20 +423,25 @@ class ModsModel(QAbstractTableModel):
             if c == 0:
                 return r["name"]
             if c == 1:
-                return STATUS[r["status"]][0]
+                return "Can't pull" if r["problems"] else STATUS[r["status"]][0]
             if c == 2:
                 return ", ".join(r["versions"])
             if c == 3:
                 return dt.datetime.fromtimestamp(r["updated"]).strftime("%Y-%m-%d") if r["updated"] else "—"
             return r["folder"]
         if role == TONE_ROLE and c == 1:
-            return STATUS[r["status"]][1]
+            return "danger" if r["problems"] else STATUS[r["status"]][1]
         if role == SORT_ROLE:
             return [r["name"].lower(), STATUS[r["status"]][2], ",".join(r["versions"]), r["updated"] or 0,
                     r["folder"]][c]
         if role == Qt.ToolTipRole:
             if c == 0:
                 return f"{r['name']}\n{r['packageId']}"
+            if c == 1 and r["problems"]:
+                return "Won't work on the stable copy's game version:\n" + "\n".join(r["problems"])
+            if c == 1 and r["status"] == "update" and r["loaded"] is not None:
+                return ("Changes files the stable copy's game version loads" if r["loaded"] else
+                        "Only other game versions' files or metadata changed")
             if c == 2 and unsupported:
                 return f"Doesn't list {self.target}"
         if role == Qt.ForegroundRole:
@@ -548,7 +563,7 @@ class ModsPage(Page):
         sel = self.selected()
         self.model.set_rows(rows, diff["target"] if diff else None)
         counts = {k: sum(r["status"] == k for r in rows) for k in STATUS}
-        self.updates = counts["update"]
+        self.updates = sum(r["status"] == "update" and not r["problems"] for r in rows)
         self.update_all_btn.setText(f"Update all  {self.updates}" if self.updates else "Update all")
         self.seg.set_text("stable", f"In stable  {len(man['mods'])}")
         self.seg.set_text("update", f"Updates  {counts['update']}" if diff else "Updates")
@@ -577,7 +592,7 @@ class ModsPage(Page):
 
     def _selection_changed(self, *_):
         r = self.selected()
-        ok = bool(r and r["status"] in ("update", "new")) and self.can_modify
+        ok = bool(r and r["status"] in ("update", "new") and not r["problems"]) and self.can_modify
         self.pull_btn.setEnabled(ok)
         self.update_all_btn.setEnabled(self.can_modify and self.updates > 0)
         self.update_all_btn.setToolTip(self.reason if not self.can_modify else
@@ -587,12 +602,15 @@ class ModsPage(Page):
             self.pull_btn.setToolTip(self.reason)
         elif r and r["status"] not in ("update", "new"):
             self.pull_btn.setToolTip(f"{r['name']} is {STATUS[r['status']][0].lower()}")
+        elif r and r["problems"]:
+            self.pull_btn.setToolTip(f"{r['name']} won't work on the stable copy's game version: "
+                                     + "; ".join(r["problems"]))
         else:
             self.pull_btn.setToolTip("Copy the selected mod's current Steam version into the stable copy")
 
     def _pull(self, *_):
         r = self.selected()
-        if r and r["status"] in ("update", "new") and self.can_modify:
+        if r and r["status"] in ("update", "new") and not r["problems"] and self.can_modify:
             self.win.pull(r)
 
     def set_enabled(self, can_modify, reason):
