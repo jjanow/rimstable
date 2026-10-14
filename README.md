@@ -70,7 +70,7 @@ Run with no arguments, or `-h` after any command (`rimstable prune -h`), for bui
 |---|---|
 | `freeze` | build or refresh the stable copy from the Steam install |
 | `userdata` | replace the stable config and saves with Steam's |
-| `diff` | show what changed on Steam since the last freeze |
+| `diff [-held]` | show what changed on Steam since the last freeze |
 | `pull [mod]` | update every changed mod from Steam, or just the named one |
 | `hold <mod> [reason]` / `unhold <mod>` | keep a stable mod as it is, or release it |
 | `snap` | take a snapshot |
@@ -115,7 +115,7 @@ old ones stay in that snapshot if you need them back. To refreeze and take Steam
 `freeze` and then `userdata`. Like a refreeze, it refuses when Steam's game is a different
 major.minor version than the stable copy: the stable game would reset Steam's mod list.
 
-### `diff`
+### `diff [-held]`
 
 Read-only. Compares the stable copy with the Steam install and shows:
 
@@ -123,7 +123,8 @@ Read-only. Compares the stable copy with the Steam install and shows:
 - mods updated on Steam since the freeze, each marked `1.6 changes` (files the stable copy's game
   version loads changed), `other` (only other versions' folders or metadata changed, e.g. a new `1.7/`
   folder), or `CAN'T PULL` with the reason (see `pull`). Held mods aren't counted here.
-- held mods with their reason, and whether Steam's copy changed, is the same, or is gone
+- held mods with their reason, and whether Steam's copy changed, is the same, or is gone. Mods held
+  with the same reason (e.g. by `hold -all`) show as one line with those counts; `-held` lists each.
 - mods that are no longer in the Workshop folder or the Steam game's local `Mods/` folder
 - differences in the active mod list
 - how many stable mods support the Steam game's version (e.g. 1.7)

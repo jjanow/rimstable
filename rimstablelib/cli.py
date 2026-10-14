@@ -282,10 +282,22 @@ def cmd_diff(a):
     if d["held"]:
         print(f"\nheld mods (pull and freeze leave them alone; 'rimstable unhold MOD' releases one): "
               f"{len(d['held'])}")
-        for r, cur, ch in sorted(d["held"], key=lambda x: x[0]["name"].lower()):
-            state = "Steam changed" if ch else "same as Steam" if cur else "not on Steam"
-            reason = r["hold"].get("reason")
-            print(f"  {r['folder']:>11}  {state:<13}  {r['name']}" + (f"  ({reason})" if reason else ""))
+        rows = [(r, "Steam changed" if ch else "same as Steam" if cur else "not on Steam")
+                for r, cur, ch in sorted(d["held"], key=lambda x: x[0]["name"].lower())]
+        groups = {}
+        for r, state in rows:
+            groups.setdefault(r["hold"].get("reason", ""), []).append(state)
+        if a.held or len(groups) == len(rows):
+            for r, state in rows:
+                reason = r["hold"].get("reason")
+                print(f"  {r['folder']:>11}  {state:<13}  {r['name']}" + (f"  ({reason})" if reason else ""))
+        else:
+            # mods held with the same reason (e.g. by hold -all) collapse into one line; -held lists each
+            for reason, states in sorted(groups.items(), key=lambda g: -len(g[1])):
+                counts = ", ".join(f"{states.count(k)} {k}" for k in ("Steam changed", "same as Steam", "not on Steam")
+                                   if states.count(k))
+                print(f"  {len(states)} mods{f' ({reason})' if reason else ''}: {counts}")
+            print("  ('rimstable diff -held' lists each one)")
     if d["gone"]:
         print(f"\nmods no longer in Steam's Workshop or local Mods/ folder (unsubscribed/removed): {len(d['gone'])}")
         for r in d["gone"]:
@@ -361,7 +373,7 @@ def cmd_status(a):
             else:
                 since = min(r["hold"]["at"] for r in rs)[:10]
                 print(f"           {len(rs)} mods held since {since}" + (f": {reason}" if reason else ", no reason")
-                      + " ('rimstable diff' lists them)")
+                      + " ('rimstable diff -held' lists them)")
     snaps = snapshots()
     if snaps:
         print(f"snaps    {len(snaps)}, latest {snaps[-1]['short_id']} {label_of(snaps[-1])}")
@@ -479,6 +491,8 @@ def build_parser():
     s.set_defaults(fn=cmd_userdata)
 
     s = sub.add_parser("diff", help="what changed on Steam since the freeze")
+    s.add_argument("-held", action="store_true",
+                   help="list every held mod instead of one line per hold reason")
     s.set_defaults(fn=cmd_diff)
 
     s = sub.add_parser("pull", help="update all changed mods, or one named mod, from Steam (snapshots first)")
