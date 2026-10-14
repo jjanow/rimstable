@@ -79,10 +79,8 @@ Everything rimstable does today assumes Unity-era 1.6. The 1.7 copy would live a
 
 ## 2. Small follow-ups for the 1.6 copy
 
-- [ ] **Hold every mod in the 1.6 copy** so pull-all / Update all can't change the known-working set
-      (the user asked for all of them held). `hold` takes one mod today: add `hold -all [reason]` and
-      several mods per `hold` / `unhold`, then hold them all. A single mod can still be updated
-      deliberately with `pull MOD -held`.
+- [x] **Held every mod in the 1.6 copy** (269, reason "1.6 known-working set; Steam is on 1.7") with the
+      new `hold -all [reason]` / `unhold -all`. One mod can still be updated on purpose: `pull MOD -held`.
 - [ ] GUI "Supports" column warns against Steam's version only; show whether the mod supports the
       copy's own version, which is what matters for a pull.
 

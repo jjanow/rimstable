@@ -151,7 +151,7 @@ It doesn't add Workshop mods the stable copy doesn't have, leaves mods that are 
 alone, and skips (and lists) held mods and updates that won't work on the stable copy's game version.
 The manager window's "Update all" button runs this.
 
-### `hold <mod> [REASON]` and `unhold <mod>`
+### `hold <mod> [REASON]`, `hold -all [REASON]`, `unhold <mod>`, `unhold -all`
 
 `hold` keeps a stable mod as it is: `pull` with no mod named, "Update all" and `freeze` leave its
 stable copy and manifest record alone, and `pull <mod>` refuses it unless given `-held`. Use it for mods
@@ -159,6 +159,10 @@ whose stable copy differs from Steam's on purpose, e.g. your own mods, where Ste
 and the stable copy keeps the 1.6 one. `<mod>` matches mods in the stable copy the same way `pull`
 matches Steam mods. `REASON` is optional, can be several words, and is shown by `diff`, `status` and
 the manager window; holding a held mod again without a reason keeps the old one. `unhold` releases it.
+
+`hold -all` holds every mod in the stable copy, freezing the whole known-working set; mods that were
+already held keep their reason. A single mod can still be updated on purpose with `pull <mod> -held`.
+`unhold -all` releases every held mod.
 
 Holds live in `manifest.json` and take no snapshot. `restore` puts back the holds the snapshot had.
 

@@ -132,6 +132,19 @@ def hold_text(r):
 
 def cmd_hold(a):
     man = load_manifest()
+    if a.all:
+        # with -all the first word lands in `mod`; it's part of the reason
+        reason = " ".join(([a.mod] if a.mod else []) + a.reason).strip()
+        at = dt.datetime.now().isoformat(timespec="seconds")
+        new = [r for r in man["mods"] if not r.get("hold")]
+        for r in new:
+            r["hold"] = {"reason": reason, "at": at}
+        save_manifest(man)
+        print(f"holding {len(new)} mods ({len(man['mods']) - len(new)} were already held and keep their reason): "
+              "pull, Update all and freeze leave the stable copies alone" + (f"\nreason: {reason}" if reason and new else ""))
+        return
+    if not a.mod:
+        die("name a mod to hold, or use -all")
     r = stable_mod(a.mod, man)
     reason = " ".join(a.reason).strip() or (r.get("hold") or {}).get("reason", "")
     r["hold"] = {"reason": reason, "at": dt.datetime.now().isoformat(timespec="seconds")}
@@ -142,6 +155,15 @@ def cmd_hold(a):
 
 def cmd_unhold(a):
     man = load_manifest()
+    if a.all:
+        held = [r for r in man["mods"] if r.get("hold")]
+        for r in held:
+            del r["hold"]
+        save_manifest(man)
+        print(f"released {len(held)} mods; pull and freeze update them from Steam again")
+        return
+    if not a.mod:
+        die("name a mod to release, or use -all")
     r = stable_mod(a.mod, man)
     if not r.get("hold"):
         print(f"{r['name']} ({r['packageId']}) isn't held")
@@ -463,13 +485,17 @@ def build_parser():
     s.set_defaults(fn=cmd_pull)
 
     s = sub.add_parser("hold", help="keep a stable mod as it is: pull, Update all and freeze skip it")
-    s.add_argument("mod", help="packageId, Workshop id/folder, or part of the name of a mod in the stable copy")
+    s.add_argument("mod", nargs="?", help="packageId, Workshop id/folder, or part of the name of a mod in the stable copy")
     s.add_argument("reason", nargs="*", metavar="REASON",
                    help="why it's held, quoted or not (shown by diff, status and the GUI)")
+    s.add_argument("-all", action="store_true",
+                   help="hold every mod in the stable copy (already-held mods keep their reason); "
+                        "then everything after -all is the reason")
     s.set_defaults(fn=cmd_hold)
 
     s = sub.add_parser("unhold", help="release a held mod, so pull and freeze update it from Steam again")
-    s.add_argument("mod", help="packageId, Workshop id/folder, or part of the name of a held mod")
+    s.add_argument("mod", nargs="?", help="packageId, Workshop id/folder, or part of the name of a held mod")
+    s.add_argument("-all", action="store_true", help="release every held mod")
     s.set_defaults(fn=cmd_unhold)
 
     s = sub.add_parser("snap", help="take a snapshot")
