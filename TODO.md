@@ -1,111 +1,106 @@
-# TODO: RimWorld 1.6 + 1.7 support with per-mod version management
+# TODO: a stable copy per RimWorld version
 
-Goal: rimstable handles a stable copy on 1.6 while Steam runs 1.7, lets each mod be kept at a chosen
-version, and can later move the stable copy to 1.7 (or keep a copy per version) without losing the
-mod list, saves or helpers.
+## What rimstable is for
 
-Status as of 2026-10-13: the stable copy is 1.6.4871, Steam is 1.7.4977. Freeze and userdata refuse
-across versions; pull works across versions.
+**Point-in-time copies of mods that are known to work, attached to the game version they work on.**
 
-## Done
+The problem it solves: Steam updates Workshop mods whenever their authors do. Those updates
+frequently break the 1.6 game, and mods whose authors never update break 1.7 (both the Steam install
+and anything frozen from it). So rimstable freezes a working game + mod set and keeps it apart from
+Steam:
 
-- [x] `freeze` / `userdata` refuse when Steam's major.minor differs from the stable copy's (ce69492)
-- [x] Running check matches 1.7's `RimWorld` process (ce69492)
-- [x] `pull` / `diff` read Steam's local `RimWorld/Mods/` as well as the Workshop (ce69492)
-- [x] `rimstablelib/modver.py`: which folders and files a RimWorld version loads, following 1.6's
-      `ModContentPack.InitLoadFolders` (checked against the decompiled 1.6 `Assembly-CSharp.dll`)
-- [x] `pull` refuses mod updates that won't work on the stable version (About.xml doesn't list it, or
-      a loaded DLL targets .NET while the game is .NET Framework); pull-all / Update all skip them;
-      `-anyversion` overrides
-- [x] `diff` marks each changed mod `1.6 changes` / `other` / `CAN'T PULL`; local mods get a date
-- [x] GUI: "Can't pull" rows, Update all count and dialog exclude blocked mods
-- [x] README: `pull` and `diff` sections
-- [x] Holds: `hold MOD [reason]` / `unhold MOD` (`"hold": {"reason", "at"}` in the manifest record);
-      `diff` and `status` list them, pull-all / Update all / refreeze skip them, `pull MOD` refuses
-      without `-held` (the hold survives that pull); GUI Hold/Unhold button + context menu, "Held"
-      filter and pill; README section. Decisions made (keep unless deliberately revisited):
-      - `pull MOD` overrides a hold with its own flag `-held`, not `-force`: `-force` means "ignore the
-        Steam-is-updating check" and must not also release holds.
-      - A refreeze keeps a held mod's stable copy and manifest record even when Steam no longer has it
-        active; the mod is then inactive in stable, because the refreeze takes Steam's load order.
-      - `hold` / `unhold` only write `manifest.json` and take no snapshot, so `restore` rolls holds
-        back along with the manifest.
-      - Holding an already-held mod again without a reason keeps the old reason.
-      - A held mod that is gone from Steam shows under "held" (as "not on Steam"), not under "no longer
-        on Steam" (`core.diff_report` leaves held mods out of `gone`).
-      - `checked_on` was deliberately left out of the holds change to keep that change small; it's
-        item 1 below.
-      - No bulk hold: `hold` takes exactly one mod and refuses an ambiguous name (e.g. `jjanow` matches
-        18). Holding all 20 own mods means 20 commands; a multi-mod `hold` is a possible follow-up.
-- [x] `~/repos/rimworld-mods/install.sh` header: pull reads Steam's local Mods/ too; mentions holds
+1. **The 1.6 stable copy** (`~/Games/RimWorld-stable`, 1.6.4871) holds the mods as they were when
+   1.6 worked. It stays exactly as it is; this is the user's only fully working install right now.
+2. **A 1.7 stable copy, later.** Over the coming weeks the user gets Steam's 1.7 install working
+   (dropping or replacing mods that broke). Once it works, rimstable freezes it into a separate
+   copy (e.g. `~/Games/RimWorld-stable-1.7`) the same way the 1.6 copy was made.
+3. **Repeat for every future version or DLC:** get Steam working, freeze a new copy. Older copies
+   are left alone.
+4. **The copies never interact.** Each has its own game, mods, manifest, userdata, snapshots and
+   shortcut. No migration, nothing copied from one to another.
+5. **Mod updates are only ever on demand.** In a copy, one mod or all of them can be updated from
+   Steam's Workshop when the user asks; nothing updates on its own, and by default a copy's mods
+   don't change at all.
 
-## 1. Per-mod version management (next)
+Status as of 2026-10-13: Steam is 1.7.4977. The 1.6 copy cannot be refrozen any more (Steam's game is
+1.7; `freeze` refuses), so from now on it only changes through `pull` (and `restore`).
 
-The stable copies of the user's own mods (`jjanow_*`, `rimstable_*`) differ from Steam's on purpose.
-Holds now protect them, but none are held yet.
+## Done (already supports the above)
 
-- [ ] Hold the user's 20 own mods (ask first; that's their call). `hold` takes one mod at a time.
-- [ ] **Record which game version each stable mod copy was checked on** (`checked_on: "1.6"` in the
-      manifest record), so a version move can list mods that were never checked on the new version.
-      Carry it over with `core.keep_hold` (or a generalised version of it) like the hold.
-- [ ] **Optional: pin a held mod to a source.** E.g. "take this mod from ~/repos/rimworld-mods at
-      commit X" instead of from Steam, so the stable copy of an own mod can be updated deliberately
-      without going through Steam's 1.7 copy. Decide whether this is worth it vs `install.sh --dest`.
+- [x] One copy per root: `RIMSTABLE_ROOT` picks the copy (default `~/Games/RimWorld-stable`).
+- [x] `freeze` / `userdata` refuse when Steam's major.minor differs from the copy's (ce69492), so the
+      1.6 copy can't be overwritten by 1.7.
+- [x] `pull MOD` / `pull` (all) / GUI "Update all": on demand only; read Steam's Workshop and Steam's
+      local `RimWorld/Mods/` (ce69492).
+- [x] `pull` refuses updates that won't work on the copy's version (About.xml doesn't list it, or a
+      DLL it loads targets .NET while the game is .NET Framework); pull-all skips them;
+      `-anyversion` overrides. `diff` marks each update `1.6 changes` / `other` / `CAN'T PULL`
+      (cb1730b, `rimstablelib/modver.py`, checked against 1.6's load-folder code).
+- [x] Holds: `hold MOD [reason]` / `unhold MOD` keep a mod as it is through pull-all, Update all and
+      refreeze; `pull MOD` needs `-held` (54e5425).
 
-## 2. Readiness reporting for a move to 1.7
+## 1. Make a 1.7 stable copy possible
 
-- [ ] `diff`'s "N/269 list support for 1.7" only reads About.xml. Run `modver.problems()` for 1.7
-      with the `netcore` runtime instead. That catches mods that list 1.7 but would load nothing
-      usable, though a .NET Framework DLL may still load on 1.7. Verify what 1.7 actually does with a
-      net472 DLL before reporting those as OK or broken.
-- [ ] GUI: the "Supports" column warns against Steam's version only; also show whether the mod
-      supports the stable version.
-- [ ] Verify `load_folders()` against 1.7's own load-folder code (decompile the 1.7 assembly the
-      same way; 1.6's rules were checked, 1.7's weren't).
-- [ ] Report the 7 mods active in stable but not in Steam's 1.7 list (Vehicle Framework, Prepatcher,
-      XML Extensions, VPE Psycasts, MGW, Gravship 1/2) as "not tested on 1.7" in the readiness view.
+Everything rimstable does today assumes Unity-era 1.6. The 1.7 copy would live at e.g.
+`~/Games/RimWorld-stable-1.7` and be made with `freeze` from Steam's 1.7.
 
-## 3. Moving the stable copy to 1.7 (or keeping one per version)
-
-**Decision needed first:** move the one stable copy from 1.6 to 1.7, or keep two stable copies side
-by side (e.g. `~/Games/RimWorld-stable` for 1.6 and `~/Games/RimWorld-stable-1.7`), with the GUI
-switching between roots. Everything below depends on that choice.
-
-- [ ] **Executable per version.** `EXE_NAME` is hardcoded to `RimWorldLinux`; 1.7's executable is
-      `RimWorld`. Detect the executable from the stable `game/` folder for `launch`, `shortcut` and
-      the Windows `.lnk` icon. Find out 1.7's Windows executable name (unknown).
-- [ ] **Launch arguments on 1.7.** 1.7 still accepts `-savedatafolder` (string in `RimWorld.dll`).
-      `-logFile` is a Unity option; 1.7 writes `Logs/Player.log` inside the save data folder instead.
-      Verify, then drop `-logFile` and the `Player.log` -> `Player-prev.log` rotation for 1.7.
+- [ ] **Executable per copy.** `EXE_NAME` is hardcoded to `RimWorldLinux`; 1.7's is `RimWorld`.
+      Detect it from the copy's `game/` folder for `launch`, `shortcut` and the Windows `.lnk` icon.
+      Find 1.7's Windows executable name.
+- [ ] **Launch arguments on 1.7.** 1.7 still has `-savedatafolder` (string in `RimWorld.dll`);
+      verify it works. `-logFile` is a Unity option; 1.7 writes `Logs/Player.log` inside the save
+      data folder. Drop `-logFile` and the `Player.log` -> `Player-prev.log` rotation for 1.7.
       Check whether `LC_ALL=C` is still needed.
-- [ ] **USERDATA_SKIP for 1.7:** add `Logs/` (1.7's log folder); check whether `MissileGirl/Cache`
-      (Gagarin) still applies on 1.7.
-- [ ] **NoSteamNag for 1.7.** It ships only a root `Assemblies/` DLL (net472, Harmony 2) and lists
-      only 1.6. Move it to `1.6/Assemblies` + `1.7/Assemblies` (net10, Harmony 3), list 1.7, and check
-      that 1.7 still shows the "Could not initialize Steam API" dialog at all. `install_helper()`
-      checks for `NoSteamNag/Assemblies/RimstableNoSteamNag.dll`; update that path. Check the 1.7
-      Harmony packageId is still `brrainz.harmony` (Steam's 1.7 list says yes).
-- [ ] **Mod list across versions.** RimWorld resets a ModsConfig.xml saved by another major.minor.
-      Decompile 1.7's ModsConfig loading to see exactly when it resets, then decide: write the new
-      version into the stable ModsConfig on migration, or take Steam's 1.7 list.
-- [ ] **A `migrate` command** (or `freeze -version`): snapshot, copy the new game, carry over held
-      mods, run the readiness check and refuse or warn on blocked mods, fix ModsConfig, reinstall
-      NoSteamNag, record the move in the manifest. `require_same_version` stays for plain refreezes.
-- [ ] **Saves:** decide what to do with 1.6 saves on a 1.7 copy (keep them in the snapshot; warn).
-- [ ] **DDS on 1.7.** 1.7 (Waylith, not Unity) references `.dds` in `Waylith.dll` /
-      `Brutal.Texture.dll`, but whether it prefers a `.dds` next to the `.png`, and whether todds'
-      `-vf` vertical flip (a Unity quirk) is still right, is unverified. Test on one mod before
-      enabling DDS for a 1.7 stable copy; make the flip depend on the game version if needed.
-- [ ] `restore` of a pre-migration snapshot puts back the 1.6 game too. Check that the manifest,
-      DDS ledger and shortcut all agree afterwards.
+- [ ] **Where Steam's 1.7 keeps its data.** Find 1.7's save-data path (decompile) and check
+      `find_config()` finds it. If 1.7 shares the 1.6 folder, freezing 1.7 copies the 1.6 saves into
+      the 1.7 copy too (a copy, harmless to the 1.6 copy, but worth saying in the freeze output).
+- [ ] **USERDATA_SKIP for 1.7:** add `Logs/`; check whether `MissileGirl/Cache` (Gagarin) still
+      applies.
+- [ ] **NoSteamNag on 1.7.** First check 1.7 still shows the "Could not initialize Steam API"
+      dialog without Steam. If it does: ship `1.6/Assemblies` (net472, Harmony 2) and `1.7/Assemblies`
+      (net10, Harmony 3), list 1.7 in About.xml, and update the path `install_helper()` checks.
+      Confirm 1.7 Harmony's packageId is still `brrainz.harmony`.
+- [ ] **ModsConfig on freeze.** Check 1.7's ModsConfig loading (decompile) so a frozen 1.7 copy keeps
+      Steam's mod list rather than resetting it.
+- [ ] **Pull checks for a 1.7 copy.** `modver` follows 1.6's load-folder rules; verify them against
+      1.7's code. Find out what 1.7 does with a net472 DLL (loads it, or not) so pull blocks the
+      right mods on a 1.7 copy.
+- [ ] **DDS on 1.7.** Unverified whether 1.7 (Waylith) uses a `.dds` next to the `.png`, and whether
+      todds' `-vf` flip (a Unity quirk) is still right. Test on one mod; until then, leave DDS off for
+      a 1.7 copy (refuse `dds` there).
+- [ ] **Choosing the copy.** CLI: a `-root DIR` option (or keep `RIMSTABLE_ROOT`); GUI: show which
+      copy is open and switch between known copies. Shortcuts need distinct names per copy, e.g.
+      "RimWorld 1.6 (Stable)" / "RimWorld 1.7 (Stable)".
+- [ ] **Help get Steam's 1.7 working before freezing it:** a report of the mods active in Steam's
+      1.7 list that don't support 1.7 (`modver.problems()` for 1.7 instead of only About.xml), so
+      broken or abandoned mods can be dropped first.
+- [ ] **Freeze the 1.7 copy** once Steam's 1.7 works (the user's call; weeks away), into its own root,
+      and check launch, mod list, saves and a pull.
 
-## 4. Tests and housekeeping
+## 2. Small follow-ups for the 1.6 copy
 
-- [ ] Unit tests for `modver.py` (pure functions over directories): load-folder resolution (exact,
-      older key, default key, only-newer folder fallback), loaded-file diffs (moves, `LoadFolders`
-      gaining a `v1.7` block, deleted files), DLL runtime detection, `problems()`. The scratchpad
-      cases from 2026-10-13 are the starting set.
-- [ ] Tests for the pull skip/refuse paths and holds (pull, pull-all, refreeze) with writes stubbed (as
-      done by hand on 2026-10-13: scratch RIMSTABLE_ROOT, patch `cli.sync_into` / `snapshot` /
-      `remove_mod_dir` / `install_helper` / `require_*`, `dds.enabled`).
-- [ ] README: document the readiness view and the migration command as they land.
+- [ ] **Hold every mod in the 1.6 copy** so pull-all / Update all can't change the known-working set
+      (the user asked for all of them held). `hold` takes one mod today: add `hold -all [reason]` and
+      several mods per `hold` / `unhold`, then hold them all. A single mod can still be updated
+      deliberately with `pull MOD -held`.
+- [ ] GUI "Supports" column warns against Steam's version only; show whether the mod supports the
+      copy's own version, which is what matters for a pull.
+
+## 3. Tests and docs
+
+- [ ] Unit tests for `modver.py`: load-folder resolution (exact, older key, default key, only-newer
+      fallback), loaded-file diffs (moves, `LoadFolders` gaining a `v1.7` block, deleted files), DLL
+      runtime detection, `problems()`.
+- [ ] Tests for pull refuse/skip paths and holds (pull, pull-all, refreeze), writes stubbed (scratch
+      `RIMSTABLE_ROOT`; patch `cli.sync_into` / `snapshot` / `remove_mod_dir` / `install_helper` /
+      `require_*`, `dds.enabled`).
+- [ ] README: one copy per version, how to make and pick the 1.7 copy.
+
+## Dropped (overcomplicated; not needed when the copies never interact)
+
+- Moving the stable copy to 1.7 / a `migrate` command / restoring a pre-migration snapshot.
+- Carrying mods, holds or saves from the 1.6 copy to the 1.7 copy.
+- Readiness reporting for "is the 1.6 copy's mod list ready for 1.7" (the 1.7 copy comes from Steam's
+  1.7 list, not from the 1.6 copy).
+- `checked_on` per mod record.
+- Pinning a held mod to a git source; `~/repos/rimworld-mods/install.sh --dest` already covers it.
