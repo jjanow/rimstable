@@ -12,10 +12,10 @@ from pathlib import Path
 from . import core, dds
 from .core import (
     APP_DIR, CFG_SRC, EXE_NAME, GAME, GAME_SRC, HELPER_FOLDER, MANIFEST, MARKER, MODS, ROOT, SCRIPT,
-    RimstableError, USERDATA, USERDATA_SKIP, WINDOWS, WS_SRC, assert_dest, changed_mods, desktop_dir, die,
-    diff_report, ensure_repo, game_info, index_mods, install_helper, label_of, launch_hint, load_manifest, mod_record,
-    read_modsconfig, remove_mod_dir, require_not_running, require_steam_idle, resolve_active, restic,
-    rimworld_pids, save_manifest, shortcut_name, snap_path, snapshot, snapshots, sync_into,
+    RimstableError, USERDATA, USERDATA_SKIP, WINDOWS, assert_dest, changed_mods, desktop_dir, die,
+    diff_report, ensure_repo, game_info, install_helper, label_of, launch_hint, load_manifest, mod_record,
+    read_modsconfig, remove_mod_dir, require_not_running, require_same_version, require_steam_idle, resolve_active,
+    restic, rimworld_pids, save_manifest, shortcut_name, snap_path, snapshot, snapshots, steam_mods, sync_into,
     workshop_times, write_shortcut,
 )
 
@@ -26,6 +26,8 @@ def cmd_freeze(a):
     first = not MANIFEST.exists()
     if first and ROOT.exists() and any(ROOT.iterdir()) and not MARKER.exists():
         die(f"{ROOT} exists, is not empty and has no {MARKER.name} marker; refusing to use it")
+    if not first:
+        require_same_version(load_manifest()["game"])
 
     cfg = read_modsconfig(CFG_SRC)
     mods, missing = resolve_active(cfg["active"])
@@ -88,7 +90,7 @@ def cmd_freeze(a):
 
 
 def cmd_userdata(a):
-    load_manifest()
+    require_same_version(load_manifest()["game"])
     require_not_running()
     snapshot("pre-userdata")
     print(f"[userdata] {CFG_SRC} -> {USERDATA} (replacing, saves included)")
@@ -108,13 +110,13 @@ def cmd_pull(a):
     require_not_running()
     require_steam_idle(a.force)
     man = load_manifest()
-    ws = index_mods(WS_SRC)
+    ws = steam_mods()
     if not a.mod:
         return pull_all(man, ws)
     candidates = [{"packageId": pid, "folder": m["dir"].name, "name": m["name"]} for pid, m in ws.items()]
     hits = find_mod(a.mod, candidates)
     if len(hits) != 1:
-        die(f"'{a.mod}' matches {len(hits)} Workshop mods" +
+        die(f"'{a.mod}' matches {len(hits)} Steam mods (Workshop and local Mods/)" +
             ("".join(f"\n  {h['folder']}  {h['packageId']}  {h['name']}" for h in hits[:20])))
     pid = hits[0]["packageId"]
     src = dict(ws[pid], packageId=pid)
@@ -170,7 +172,7 @@ def cmd_diff(a):
     for r, cur in sorted(d["changed"], key=lambda x: x[0]["name"].lower()):
         print(f"  {r['folder']:>11}  {when(r['folder'])}  [{','.join(cur['supportedVersions'])}]  {r['name']}")
     if d["gone"]:
-        print(f"\nmods no longer in the Workshop folder (unsubscribed/removed): {len(d['gone'])}")
+        print(f"\nmods no longer in Steam's Workshop or local Mods/ folder (unsubscribed/removed): {len(d['gone'])}")
         for r in d["gone"]:
             print(f"  {r['folder']:>11}  {r['name']}")
 

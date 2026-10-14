@@ -97,11 +97,17 @@ Active mods that aren't on disk (unsubscribed, still downloading) don't stop the
 listed as a warning. On a refreeze, a stable copy of such a mod is kept as it is; on the first
 freeze, it's skipped.
 
+A refreeze refuses when Steam's game is a different major.minor version (e.g. 1.7) than the stable
+copy (e.g. 1.6). Moving the stable copy to a new version isn't supported yet: RimWorld resets a mod
+list saved by another major.minor, and `launch` only knows the stable version's executable
+(`RimWorldLinux`; 1.7 runs as `RimWorld`). `pull` still works across versions.
+
 ### `userdata`
 
 Takes a `pre-userdata` snapshot, then replaces all stable config **and saves** with Steam's. The
 old ones stay in that snapshot if you need them back. To refreeze and take Steam's saves, run
-`freeze` and then `userdata`.
+`freeze` and then `userdata`. Like a refreeze, it refuses when Steam's game is a different
+major.minor version than the stable copy: the stable game would reset Steam's mod list.
 
 ### `diff`
 
@@ -109,13 +115,14 @@ Read-only. Compares the stable copy with the Steam install and shows:
 
 - the game build, and whether it changed
 - mods updated on Steam since the freeze
-- mods that are no longer in the Workshop folder
+- mods that are no longer in the Workshop folder or the Steam game's local `Mods/` folder
 - differences in the active mod list
 - how many stable mods support the Steam game's version (e.g. 1.7)
 
 ### `pull [mod] [-force]`
 
-Takes a snapshot, then copies one mod from the Workshop folder into the stable copy.
+Takes a snapshot, then copies one mod from the Workshop folder, or the Steam game's local `Mods/`
+folder, into the stable copy.
 `<mod>` can be an exact packageId or Workshop id, or part of the mod's name or packageId.
 It has to match exactly one mod, or pull lists the candidates and stops. Pull doesn't change the
 load order. If the mod isn't active in the stable copy, enable it in the in-game mod manager.
@@ -223,8 +230,9 @@ or prints how to create it.
 ### Safety checks
 
 `freeze`, `pull`, `restore`, `snap`, `prune`, `launch` and `dds` (except `dds check`) won't run while
-RimWorld is running. `freeze`, `pull` and `dds steam` also won't run while Steam is updating
-RimWorld or a mod; `-force` skips that check. In Steam's folders, `dds` only creates `.dds` files
+RimWorld is running (`RimWorldLinux`, or `RimWorld` for 1.7, on Linux). `freeze`, `pull` and `dds steam` also won't run while Steam is updating
+RimWorld or a mod; `-force` skips that check. A refreeze and `userdata` won't run while Steam's game
+is a different major.minor version than the stable copy. In Steam's folders, `dds` only creates `.dds` files
 next to PNGs and only deletes ones it recorded; nothing else there is ever written.
 
 ## DLC workflow
@@ -233,7 +241,8 @@ next to PNGs and only deletes ones it recorded; nothing else there is ever writt
 2. Try the DLC in the Steam install. Run `rimstable diff` now and then to see how many
    of your mods support the new version.
 3. Once the Steam setup works for you, `rimstable freeze`. If it goes wrong,
-   `rimstable restore <id>`.
+   `rimstable restore <id>`. This works within one major.minor version. A refreeze onto a new one
+   (1.6 to 1.7) is refused for now; meanwhile `rimstable pull` keeps the stable copy's mods current.
 4. Saves made on a newer game version won't load in an older frozen copy.
 
 ## Notes

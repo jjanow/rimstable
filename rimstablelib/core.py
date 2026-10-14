@@ -91,6 +91,8 @@ WS_ACF = STEAMAPPS / f"workshop/appworkshop_{APPID}.acf"
 APP_ACF = STEAMAPPS / f"appmanifest_{APPID}.acf"
 CFG_SRC = Path(os.environ.get("RIMSTABLE_CONFIG_SRC") or find_config(STEAMAPPS))
 EXE_NAME = "RimWorldWin64.exe" if WINDOWS else "RimWorldLinux"
+# process names checked for a running game: 1.7 (Waylith) runs as "RimWorld" on Linux
+PROCESS_NAMES = [EXE_NAME] if WINDOWS else [EXE_NAME, "RimWorld"]
 
 ROOT = Path(os.environ.get("RIMSTABLE_ROOT", HOME / "Games/RimWorld-stable")).resolve()
 GAME = ROOT / "game"
@@ -172,7 +174,7 @@ def rimworld_pids():
                            capture_output=True, text=True, errors="replace",
                            creationflags=subprocess.CREATE_NO_WINDOW)
         return tasklist_pids(r.stdout, EXE_NAME)
-    r = subprocess.run(["pgrep", "-x", EXE_NAME], capture_output=True, text=True)
+    r = subprocess.run(["pgrep", "-x", "|".join(PROCESS_NAMES)], capture_output=True, text=True)
     return r.stdout.split()
 
 
@@ -377,16 +379,33 @@ def major_minor(v):
     return m.group(1) if m else None
 
 
+def steam_mods():
+    """packageId -> mod for every mod the Steam install has: Workshop, then the game's local Mods/ folder
+    (the Workshop copy wins when both have a packageId)."""
+    return {**index_mods(GAME_SRC / "Mods"), **index_mods(WS_SRC)}
+
+
+def require_same_version(stable_game):
+    """Refuse when Steam's game is a different major.minor than the stable copy. RimWorld resets a mod list
+    saved by another major.minor, and launch only knows the stable copy's executable."""
+    stable = major_minor(stable_game["version_txt"])
+    steam = {major_minor(read_text(GAME_SRC / "Version.txt")), major_minor(read_modsconfig(CFG_SRC)["version"])}
+    if not stable or steam != {stable}:
+        found = " / ".join(sorted(v or "unknown" for v in steam))
+        die(f"Steam has RimWorld {found} but the stable copy is {stable or 'unknown'}. Moving the stable copy "
+            "to another game version isn't supported yet: its mod list would be reset, and launch only knows "
+            "this version's executable. 'pull' still updates mods.")
+
+
 def resolve_active(active):
     """Map Steam's active list to sources. Returns (mods, missing); DLC/core come with the game."""
-    ws = index_mods(WS_SRC)
     data = index_mods(GAME_SRC / "Data")
-    local = index_mods(GAME_SRC / "Mods")
+    sources = steam_mods()
     mods, missing = [], []
     for pid in active:
         if pid in data:
             continue
-        src = ws.get(pid) or local.get(pid)
+        src = sources.get(pid)
         if not src:
             missing.append(pid)
             continue
@@ -468,7 +487,7 @@ def label_of(s):
 # ---------- reports ----------
 
 def changed_mods(man, ws):
-    """(manifest record, Workshop mod) for every stable mod whose Steam copy changed since it was frozen."""
+    """(manifest record, Steam mod) for every stable mod whose Steam copy changed since it was frozen."""
     return [(r, ws[r["packageId"]]) for r in man["mods"]
             if r["packageId"] in ws and source_fingerprint(ws[r["packageId"]]["dir"]) != r["fingerprint"]]
 
@@ -478,7 +497,7 @@ def diff_report():
     man = load_manifest()
     steam_game = game_info(GAME_SRC, CFG_SRC)
     target = major_minor(steam_game["version_txt"])
-    ws = index_mods(WS_SRC)
+    ws = steam_mods()
     gone = [r for r in man["mods"] if r["packageId"] not in ws]
     ready = sum(target in ws[r["packageId"]]["supportedVersions"] for r in man["mods"] if r["packageId"] in ws)
     changed = changed_mods(man, ws)
