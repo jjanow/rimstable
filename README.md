@@ -206,7 +206,7 @@ deletes nothing.
 
 ### `status`
 
-Shows the stable root, freeze time, game version, mod count, held mods with their reason, snapshot count with the latest
+Shows the stable root, freeze time, game version, mod count, held mods with their reason (mods held with the same reason, e.g. by `hold -all`, as one line), snapshot count with the latest
 snapshot, how many generated DDS each target has (or `off`), and whether RimWorld is running.
 
 ### `dds [check] [clean] [stable|steam|both] [MOD ...] [-force]`

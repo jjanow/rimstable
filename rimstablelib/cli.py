@@ -351,8 +351,17 @@ def cmd_status(a):
     held = sorted((r for r in man["mods"] if r.get("hold")), key=lambda r: r["name"].lower())
     if held:
         print(f"held     {len(held)}")
+        # mods held with the same reason (e.g. by hold -all) collapse into one line; lone holds are listed
+        groups = {}
         for r in held:
-            print(f"           {r['name']} ({r['folder']}), {hold_text(r)}")
+            groups.setdefault(r["hold"].get("reason", ""), []).append(r)
+        for reason, rs in sorted(groups.items(), key=lambda g: -len(g[1])):
+            if len(rs) == 1:
+                print(f"           {rs[0]['name']} ({rs[0]['folder']}), {hold_text(rs[0])}")
+            else:
+                since = min(r["hold"]["at"] for r in rs)[:10]
+                print(f"           {len(rs)} mods held since {since}" + (f": {reason}" if reason else ", no reason")
+                      + " ('rimstable diff' lists them)")
     snaps = snapshots()
     if snaps:
         print(f"snaps    {len(snaps)}, latest {snaps[-1]['short_id']} {label_of(snaps[-1])}")
