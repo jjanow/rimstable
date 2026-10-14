@@ -16,7 +16,7 @@ from .widgets import Banner, Pill, button, label, refresh_icons
 NAV = [("overview", "Overview"), ("mods", "Mods"), ("snapshots", "Snapshots"), ("activity", "Activity")]
 TITLES = {"freeze": "Freezing", "pull": "Pulling", "snap": "Taking a snapshot", "restore": "Restoring",
           "prune": "Pruning snapshots", "userdata": "Replacing config and saves", "shortcut": "Creating a shortcut",
-          "dds": "Encoding textures"}
+          "dds": "Encoding textures", "hold": "Holding a mod", "unhold": "Releasing a held mod"}
 
 
 def steam_problem():
@@ -361,6 +361,19 @@ class MainWindow(QMainWindow):
                            f"Pull {row['name'][:40]}", icon_name="download", details=details):
             self.run(["pull", row["packageId"]])
 
+    def hold(self, row):
+        d = dialogs.HoldDialog(self, row["name"][:40])
+        if d.exec():
+            self.run(d.args(row["packageId"]))
+
+    def unhold(self, row):
+        reason = row["hold"].get("reason")
+        if dialogs.confirm(self, f"Unhold {row['name']}?",
+                           f"Update all and refreeze will copy the Steam version of {row['name']} into the stable "
+                           "copy again whenever it changes.",
+                           "Unhold", icon_name="lock", details=f"Held because: {reason}" if reason else None):
+            self.run(["unhold", row["packageId"]])
+
     def update_all(self):
         d = self.diff or {}
         blocked = d.get("blocked", set())
@@ -373,6 +386,10 @@ class MainWindow(QMainWindow):
         if skipped:
             more += (f"\n\nSkipped, won't work on {d.get('stable_target')}:\n" + "\n".join(skipped[:10])
                      + (f"\n…and {len(skipped) - 10} more" if len(skipped) > 10 else ""))
+        held = sorted((r["name"] for r, _, ch in d.get("held", []) if ch), key=str.lower)
+        if held:
+            more += (f"\n\nHeld, left as they are:\n" + "\n".join(held[:10])
+                     + (f"\n…and {len(held) - 10} more" if len(held) > 10 else ""))
         if dialogs.confirm(self, f"Update {len(changed)} mod{'s' if len(changed) != 1 else ''}?",
                            "Copies the current Steam version of every stable mod that changed since the freeze. "
                            "One \u201cpre-pull all\u201d snapshot is taken first. The load order isn't changed, "

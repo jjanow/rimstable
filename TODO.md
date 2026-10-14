@@ -20,31 +20,37 @@ across versions; pull works across versions.
 - [x] `diff` marks each changed mod `1.6 changes` / `other` / `CAN'T PULL`; local mods get a date
 - [x] GUI: "Can't pull" rows, Update all count and dialog exclude blocked mods
 - [x] README: `pull` and `diff` sections
+- [x] Holds: `hold MOD [reason]` / `unhold MOD` (`"hold": {"reason", "at"}` in the manifest record);
+      `diff` and `status` list them, pull-all / Update all / refreeze skip them, `pull MOD` refuses
+      without `-held` (the hold survives that pull); GUI Hold/Unhold button + context menu, "Held"
+      filter and pill; README section. Decisions made (keep unless deliberately revisited):
+      - `pull MOD` overrides a hold with its own flag `-held`, not `-force`: `-force` means "ignore the
+        Steam-is-updating check" and must not also release holds.
+      - A refreeze keeps a held mod's stable copy and manifest record even when Steam no longer has it
+        active; the mod is then inactive in stable, because the refreeze takes Steam's load order.
+      - `hold` / `unhold` only write `manifest.json` and take no snapshot, so `restore` rolls holds
+        back along with the manifest.
+      - Holding an already-held mod again without a reason keeps the old reason.
+      - A held mod that is gone from Steam shows under "held" (as "not on Steam"), not under "no longer
+        on Steam" (`core.diff_report` leaves held mods out of `gone`).
+      - `checked_on` was deliberately left out of the holds change to keep that change small; it's
+        item 1 below.
+      - No bulk hold: `hold` takes exactly one mod and refuses an ambiguous name (e.g. `jjanow` matches
+        18). Holding all 20 own mods means 20 commands; a multi-mod `hold` is a possible follow-up.
+- [x] `~/repos/rimworld-mods/install.sh` header: pull reads Steam's local Mods/ too; mentions holds
 
 ## 1. Per-mod version management (next)
 
 The stable copies of the user's own mods (`jjanow_*`, `rimstable_*`) differ from Steam's on purpose.
-Right now one Update all click overwrites them.
+Holds now protect them, but none are held yet.
 
-- [ ] **Hold a mod at its stable version.** Add a `held` flag to the mod's manifest record (survives
-      refreeze; `freeze` must keep held mods' stable copies the way it keeps missing mods).
-      - [ ] CLI: `rimstable hold MOD [reason]`, `rimstable unhold MOD`, and holds listed in `status`
-      - [ ] `diff` shows held mods as `held` (with the reason) instead of as an update; they don't
-            count toward "updated on Steam"
-      - [ ] `pull` with no mod named and Update all skip held mods; `pull MOD` on a held mod refuses
-            unless given its own override flag (not `-force`, which means "ignore Steam updating")
-      - [ ] GUI: Hold / Unhold in the mods table (context menu + button), a "Held" filter, held tone
-      - [ ] Hold the user's 20 own mods once this lands (ask first; that's their call)
-- [ ] **Refreeze must respect holds.** `cmd_freeze` re-mirrors every active mod from Steam; held mods
-      must be skipped there too, or a refreeze undoes them.
+- [ ] Hold the user's 20 own mods (ask first; that's their call). `hold` takes one mod at a time.
 - [ ] **Record which game version each stable mod copy was checked on** (`checked_on: "1.6"` in the
       manifest record), so a version move can list mods that were never checked on the new version.
+      Carry it over with `core.keep_hold` (or a generalised version of it) like the hold.
 - [ ] **Optional: pin a held mod to a source.** E.g. "take this mod from ~/repos/rimworld-mods at
       commit X" instead of from Steam, so the stable copy of an own mod can be updated deliberately
       without going through Steam's 1.7 copy. Decide whether this is worth it vs `install.sh --dest`.
-- [ ] Fix the stale header in `~/repos/rimworld-mods/install.sh`: "rimstable pull only reads Workshop
-      mods" has been wrong since ce69492. Say that pull reads local mods too and that held mods are
-      skipped (once holds exist).
 
 ## 2. Readiness reporting for a move to 1.7
 
@@ -99,5 +105,7 @@ switching between roots. Everything below depends on that choice.
       older key, default key, only-newer folder fallback), loaded-file diffs (moves, `LoadFolders`
       gaining a `v1.7` block, deleted files), DLL runtime detection, `problems()`. The scratchpad
       cases from 2026-10-13 are the starting set.
-- [ ] Tests for the pull skip/refuse paths with writes stubbed (as done by hand on 2026-10-13).
-- [ ] README: document holds, the readiness view and the migration command as they land.
+- [ ] Tests for the pull skip/refuse paths and holds (pull, pull-all, refreeze) with writes stubbed (as
+      done by hand on 2026-10-13: scratch RIMSTABLE_ROOT, patch `cli.sync_into` / `snapshot` /
+      `remove_mod_dir` / `install_helper` / `require_*`, `dds.enabled`).
+- [ ] README: document the readiness view and the migration command as they land.

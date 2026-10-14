@@ -118,6 +118,21 @@ class SnapshotDialog(Dialog):
         return ["snap"] + ([t] if t else [])
 
 
+class HoldDialog(Dialog):
+    def __init__(self, parent, name):
+        super().__init__(parent, f"Hold {name}?", "lock")
+        self.body.addWidget(label("Keeps the stable copy of this mod as it is: Update all and refreeze skip it, "
+                                  "and Pull asks you to unhold it first.", "muted", wrap=True))
+        self.body.addWidget(label("Reason (optional)", "eyebrow"))
+        self.reason = QLineEdit(placeholderText="e.g. stable keeps the 1.6 build on purpose")
+        self.body.addWidget(self.reason)
+        self.add_ok("Hold", icon="lock")
+
+    def args(self, packageId):
+        t = self.reason.text().strip()
+        return ["hold", packageId] + (["--"] if t.startswith("-") else []) + ([t] if t else [])
+
+
 class PruneDialog(Dialog):
     def __init__(self, parent, snaps, label_of, when):
         super().__init__(parent, "Prune snapshots", "trash", "danger")

@@ -288,8 +288,10 @@ class OverviewPage(Page):
             n = len(diff["changed"])
             gone = len(diff["gone"])
             blocked = len(diff["blocked"])
+            held = sum(ch for _, _, ch in diff["held"])
             cap = ("updated on Steam since the freeze" + (f"; {gone} no longer on Steam" if gone else "")
-                   + (f"; {blocked} won't work on {diff['stable_target']}" if blocked else ""))
+                   + (f"; {blocked} won't work on {diff['stable_target']}" if blocked else "")
+                   + (f"; {held} more held" if held else ""))
             self.s_updates.set(str(n), cap, "warn" if n else "ok")
             self.review_btn.setVisible(bool(n))
             self.update_all_btn.setVisible(n > blocked)
@@ -351,16 +353,32 @@ STATUS = {
     "update": ("Update on Steam", "warn", 0),
     "new": ("Not in stable", "accent", 1),
     "gone": ("Not on Steam", "danger", 2),
-    "current": ("Up to date", "ok", 3),
-    "checking": ("Checking…", "neutral", 4),
-    "unknown": ("Unknown", "neutral", 4),
+    "held": ("Held", "held", 3),
+    "current": ("Up to date", "ok", 4),
+    "checking": ("Checking…", "neutral", 5),
+    "unknown": ("Unknown", "neutral", 5),
 }
+
+
+def hold_tip(r):
+    """Tooltip text for a held row: since when, why, and how its Steam copy compares."""
+    h = r["hold"]
+    lines = [f"Held since {h['at'][:10]}: pull, Update all and freeze leave it alone"]
+    if h.get("reason"):
+        lines.append(h["reason"])
+    if r["steam"]:
+        lines.append({"changed": "Steam has a different version", "same": "Same as Steam",
+                      "gone": "Not on Steam"}[r["steam"]])
+    return "\n".join(lines)
 
 
 def mod_rows(man, diff, failed=False):
     """Table rows: every frozen mod, plus Workshop mods the stable copy doesn't have.
-    Without a diff the status is "checking", or "unknown" if comparing with Steam failed."""
+    Held mods are "held"; otherwise without a diff the status is "checking", or "unknown" if comparing with
+    Steam failed."""
     changed = {r["packageId"] for r, _ in diff["changed"]} if diff else set()
+    held = {r["packageId"]: "changed" if ch else "same" if cur else "gone"
+            for r, cur, ch in diff["held"]} if diff else {}
     gone = {r["packageId"] for r in diff["gone"]} if diff else set()
     ws = diff["workshop"] if diff else {}
     times = diff["times"] if diff else {}
@@ -370,14 +388,17 @@ def mod_rows(man, diff, failed=False):
     for r in man["mods"]:
         pid = r["packageId"]
         cur = ws.get(pid)
-        if diff:
+        if r.get("hold"):
+            status = "held"
+        elif diff:
             status = "update" if pid in changed else "gone" if pid in gone else "current"
         else:
             status = "unknown" if failed else "checking"
         rv = review.get(pid, {}) if status == "update" else {}
         rows.append({"name": r["name"] or pid, "packageId": pid, "folder": r["folder"], "status": status,
                      "versions": (cur or r)["supportedVersions"], "updated": times.get(r["folder"]) or r.get("timeupdated"),
-                     "problems": rv.get("problems", []), "loaded": rv.get("loaded")})
+                     "problems": rv.get("problems", []), "loaded": rv.get("loaded"),
+                     "hold": r.get("hold"), "steam": held.get(pid)})
     stable = {r["packageId"] for r in man["mods"]}
     for pid, m in ws.items():
         if pid not in stable and pid != core.HELPER_ID:
@@ -386,7 +407,7 @@ def mod_rows(man, diff, failed=False):
                      if ver and m["supportedVersions"] and ver not in m["supportedVersions"] else [])
             rows.append({"name": m["name"] or pid, "packageId": pid, "folder": m["dir"].name, "status": "new",
                          "versions": m["supportedVersions"], "updated": times.get(m["dir"].name),
-                         "problems": probs, "loaded": None})
+                         "problems": probs, "loaded": None, "hold": None, "steam": None})
     return rows
 
 
@@ -437,6 +458,8 @@ class ModsModel(QAbstractTableModel):
         if role == Qt.ToolTipRole:
             if c == 0:
                 return f"{r['name']}\n{r['packageId']}"
+            if c == 1 and r["hold"]:
+                return hold_tip(r)
             if c == 1 and r["problems"]:
                 return "Won't work on the stable copy's game version:\n" + "\n".join(r["problems"])
             if c == 1 and r["status"] == "update" and r["loaded"] is not None:
@@ -502,14 +525,17 @@ class ModsPage(Page):
         self.update_all_btn = button("Update all", "primary", "refresh",
                                      "Pull every stable mod that changed on Steam, after one snapshot")
         self.update_all_btn.clicked.connect(win.update_all)
+        self.hold_btn = button("Hold…", None, "lock")
+        self.hold_btn.clicked.connect(self._toggle_hold)
         self.updates = 0
         self.actions.addWidget(self.update_all_btn)
         self.actions.addWidget(self.pull_btn)
+        self.actions.addWidget(self.hold_btn)
 
         bar = QHBoxLayout()
         bar.setSpacing(10)
         self.seg = Segmented([("stable", "In stable"), ("update", "Updates"), ("new", "Not in stable"),
-                              ("gone", "Not on Steam"), ("all", "All")])
+                              ("gone", "Not on Steam"), ("held", "Held"), ("all", "All")])
         self.seg.changed.connect(lambda k: (self.proxy.set_filter(status=k), self._selection_changed()))
         bar.addWidget(self.seg)
         bar.addStretch(1)
@@ -532,6 +558,8 @@ class ModsPage(Page):
         self.table.sortByColumn(0, Qt.AscendingOrder)
         self.table.selectionModel().selectionChanged.connect(self._selection_changed)
         self.table.doubleClicked.connect(self._pull)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._context_menu)
 
         self.stack = QStackedLayout()
         content = QWidget()
@@ -569,6 +597,7 @@ class ModsPage(Page):
         self.seg.set_text("update", f"Updates  {counts['update']}" if diff else "Updates")
         self.seg.set_text("new", f"Not in stable  {counts['new']}" if diff else "Not in stable")
         self.seg.set_text("gone", f"Not on Steam  {counts['gone']}" if diff else "Not on Steam")
+        self.seg.set_text("held", f"Held  {counts['held']}")
         self.seg.set_text("all", f"All  {len(rows)}")
         if diff_error:
             self.hint.setText(f"Couldn't compare with Steam: {diff_error}")
@@ -576,7 +605,8 @@ class ModsPage(Page):
             self.hint.setText("Comparing with the Steam install…")
         else:
             self.hint.setText("Update all copies the Steam version of every changed mod after one snapshot; "
-                              "Pull selected does the same for one mod. Neither changes the load order.")
+                              "Pull selected does the same for one mod. Neither changes the load order. "
+                              "Held mods are left as they are.")
         if sel:
             for i in range(self.proxy.rowCount()):
                 if self.model.rows[self.proxy.mapToSource(self.proxy.index(i, 0)).row()]["packageId"] == sel["packageId"]:
@@ -607,11 +637,33 @@ class ModsPage(Page):
                                      + "; ".join(r["problems"]))
         else:
             self.pull_btn.setToolTip("Copy the selected mod's current Steam version into the stable copy")
+        held = bool(r and r["hold"])
+        self.hold_btn.setText("Unhold…" if held else "Hold…")
+        self.hold_btn.setEnabled(bool(r and r["status"] != "new") and self.can_modify)
+        self.hold_btn.setToolTip(
+            self.reason if not self.can_modify else
+            "Select a mod in the stable copy" if not r or r["status"] == "new" else
+            f"Let pull and freeze update {r['name']} from Steam again" if held else
+            f"Keep {r['name']} as it is: pull, Update all and freeze skip it")
 
     def _pull(self, *_):
         r = self.selected()
         if r and r["status"] in ("update", "new") and not r["problems"] and self.can_modify:
             self.win.pull(r)
+
+    def _toggle_hold(self, *_):
+        r = self.selected()
+        if r and r["status"] != "new" and self.can_modify:
+            (self.win.unhold if r["hold"] else self.win.hold)(r)
+
+    def _context_menu(self, pos):
+        if not self.table.indexAt(pos).isValid():
+            return
+        menu = QMenu(self.table)
+        for b in (self.pull_btn, self.hold_btn):
+            act = menu.addAction(b.icon(), b.text(), b.click)
+            act.setEnabled(b.isEnabled())
+        menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def set_enabled(self, can_modify, reason):
         self.can_modify, self.reason = can_modify, reason

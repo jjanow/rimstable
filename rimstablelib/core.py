@@ -438,6 +438,13 @@ def mod_record(mod, times):
     }
 
 
+def keep_hold(rec, old):
+    """Carry a hold over from the mod's previous manifest record onto a freshly built one."""
+    if old and old.get("hold"):
+        rec["hold"] = old["hold"]
+    return rec
+
+
 # ---------- snapshots (restic) ----------
 
 def restic(*args, capture=False):
@@ -486,10 +493,19 @@ def label_of(s):
 
 # ---------- reports ----------
 
+def steam_changed(r, ws):
+    return r["packageId"] in ws and source_fingerprint(ws[r["packageId"]]["dir"]) != r["fingerprint"]
+
+
 def changed_mods(man, ws):
-    """(manifest record, Steam mod) for every stable mod whose Steam copy changed since it was frozen."""
-    return [(r, ws[r["packageId"]]) for r in man["mods"]
-            if r["packageId"] in ws and source_fingerprint(ws[r["packageId"]]["dir"]) != r["fingerprint"]]
+    """(manifest record, Steam mod) for every stable mod whose Steam copy changed since it was frozen.
+    Held mods are left out: they aren't updates."""
+    return [(r, ws[r["packageId"]]) for r in man["mods"] if not r.get("hold") and steam_changed(r, ws)]
+
+
+def held_mods(man, ws):
+    """(manifest record, Steam mod or None, whether Steam's copy changed) for every held stable mod."""
+    return [(r, ws.get(r["packageId"]), steam_changed(r, ws)) for r in man["mods"] if r.get("hold")]
 
 
 def diff_report():
@@ -498,7 +514,7 @@ def diff_report():
     steam_game = game_info(GAME_SRC, CFG_SRC)
     target = major_minor(steam_game["version_txt"])
     ws = steam_mods()
-    gone = [r for r in man["mods"] if r["packageId"] not in ws]
+    gone = [r for r in man["mods"] if r["packageId"] not in ws and not r.get("hold")]
     ready = sum(target in ws[r["packageId"]]["supportedVersions"] for r in man["mods"] if r["packageId"] in ws)
     changed = changed_mods(man, ws)
     steam_active = read_modsconfig(CFG_SRC)["active"]
@@ -522,6 +538,7 @@ def diff_report():
         "workshop": ws,
         "times": times,
         "changed": changed,
+        "held": held_mods(man, ws),
         "gone": gone,
         "ready": ready,
         "added": [p for p in steam_active if p not in stable_active],

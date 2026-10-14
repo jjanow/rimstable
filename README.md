@@ -11,7 +11,7 @@ It is not installed on PATH; run it as `~/repos/rimstable/rimstable <command>` o
 ## Manager window
 
 `rimstable gui` opens a window that does everything the commands do: an overview of the stable copy
-against Steam, a searchable mod list with "Update all" and per-mod pull, snapshots with restore and
+against Steam, a searchable mod list with "Update all", per-mod pull and Hold/Unhold, snapshots with restore and
 prune, a Textures (DDS) card showing what is encoded or waiting for each install with an
 "Encode textures…" dialog, a Play button, and a log of every command it ran. It follows the system light/dark setting
 (`RIMSTABLE_THEME=light` or `dark` overrides it).
@@ -27,7 +27,7 @@ python3 -m venv ~/repos/rimstable/.venv                 # Windows: py -m venv pa
 ```
 
 The window only reads files itself. Every change runs the matching command (`rimstable freeze`, `pull`,
-`snap`, `restore`, `prune`, `shortcut`, `dds`) as a child process, so the checks below apply unchanged, and
+`hold`, `unhold`, `snap`, `restore`, `prune`, `shortcut`, `dds`) as a child process, so the checks below apply unchanged, and
 the window asks before anything destructive (restore, prune, replacing saves with `userdata`, removing DDS). Play starts
 `rimstable launch` detached, so closing the window doesn't close the game.
 
@@ -72,6 +72,7 @@ Run with no arguments, or `-h` after any command (`rimstable prune -h`), for bui
 | `userdata` | replace the stable config and saves with Steam's |
 | `diff` | show what changed on Steam since the last freeze |
 | `pull [mod]` | update every changed mod from Steam, or just the named one |
+| `hold <mod> [reason]` / `unhold <mod>` | keep a stable mod as it is, or release it |
 | `snap` | take a snapshot |
 | `list` | list snapshots |
 | `restore <id>` | roll the stable copy back to a snapshot |
@@ -97,6 +98,10 @@ Active mods that aren't on disk (unsubscribed, still downloading) don't stop the
 listed as a warning. On a refreeze, a stable copy of such a mod is kept as it is; on the first
 freeze, it's skipped.
 
+A refreeze keeps held mods (see `hold`) as they are: their stable copy and manifest record stay, even
+when Steam has a newer version or no longer has the mod active. A held mod that isn't active in Steam
+is inactive in the stable copy afterwards, because the refreeze takes Steam's load order.
+
 A refreeze refuses when Steam's game is a different major.minor version (e.g. 1.7) than the stable
 copy (e.g. 1.6). Moving the stable copy to a new version isn't supported yet: RimWorld resets a mod
 list saved by another major.minor, and `launch` only knows the stable version's executable
@@ -117,12 +122,13 @@ Read-only. Compares the stable copy with the Steam install and shows:
 - the game build, and whether it changed
 - mods updated on Steam since the freeze, each marked `1.6 changes` (files the stable copy's game
   version loads changed), `other` (only other versions' folders or metadata changed, e.g. a new `1.7/`
-  folder), or `CAN'T PULL` with the reason (see `pull`)
+  folder), or `CAN'T PULL` with the reason (see `pull`). Held mods aren't counted here.
+- held mods with their reason, and whether Steam's copy changed, is the same, or is gone
 - mods that are no longer in the Workshop folder or the Steam game's local `Mods/` folder
 - differences in the active mod list
 - how many stable mods support the Steam game's version (e.g. 1.7)
 
-### `pull [mod] [-force] [-anyversion]`
+### `pull [mod] [-force] [-anyversion] [-held]`
 
 Takes a snapshot, then copies one mod from the Workshop folder, or the Steam game's local `Mods/`
 folder, into the stable copy.
@@ -138,10 +144,23 @@ own rules: `LoadFolders.xml`, else the version folder, `Common/` and the mod roo
 falls back to the oldest version folder above its own when no older one exists, so a mod with only a
 `1.7/` folder loads it on 1.6. `-anyversion` pulls anyway.
 
+Pull also refuses a held mod (see `hold`). `-held` pulls it once and keeps the hold.
+
 With no `<mod>`, pull updates every stable mod that `diff` lists as updated on Steam, after a single snapshot.
 It doesn't add Workshop mods the stable copy doesn't have, leaves mods that are no longer on Steam
-alone, and skips (and lists) updates that won't work on the stable copy's game version. The manager
-window's "Update all" button runs this.
+alone, and skips (and lists) held mods and updates that won't work on the stable copy's game version.
+The manager window's "Update all" button runs this.
+
+### `hold <mod> [REASON]` and `unhold <mod>`
+
+`hold` keeps a stable mod as it is: `pull` with no mod named, "Update all" and `freeze` leave its
+stable copy and manifest record alone, and `pull <mod>` refuses it unless given `-held`. Use it for mods
+whose stable copy differs from Steam's on purpose, e.g. your own mods, where Steam has the 1.7 build
+and the stable copy keeps the 1.6 one. `<mod>` matches mods in the stable copy the same way `pull`
+matches Steam mods. `REASON` is optional, can be several words, and is shown by `diff`, `status` and
+the manager window; holding a held mod again without a reason keeps the old one. `unhold` releases it.
+
+Holds live in `manifest.json` and take no snapshot. `restore` puts back the holds the snapshot had.
 
 ### `snap [LABEL]`
 
@@ -183,7 +202,7 @@ deletes nothing.
 
 ### `status`
 
-Shows the stable root, freeze time, game version, mod count, snapshot count with the latest
+Shows the stable root, freeze time, game version, mod count, held mods with their reason, snapshot count with the latest
 snapshot, how many generated DDS each target has (or `off`), and whether RimWorld is running.
 
 ### `dds [check] [clean] [stable|steam|both] [MOD ...] [-force]`

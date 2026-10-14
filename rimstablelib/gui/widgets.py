@@ -276,7 +276,7 @@ class PillDelegate(QStyledItemDelegate):
     """Draws a cell as a small rounded pill; the model gives the tone via Qt.UserRole + 1."""
     TONES = {"ok": ("success", "success_soft"), "warn": ("warning", "warning_soft"),
              "danger": ("danger", "danger_soft"), "accent": ("accent", "accent_soft"),
-             "neutral": ("muted", "neutral_soft")}
+             "neutral": ("muted", "neutral_soft"), "held": ("text", "neutral_soft")}
 
     def paint(self, p, opt, idx):
         self.initStyleOption(opt, idx)

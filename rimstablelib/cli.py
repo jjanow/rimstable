@@ -13,7 +13,8 @@ from . import core, dds, modver
 from .core import (
     APP_DIR, CFG_SRC, EXE_NAME, GAME, GAME_SRC, HELPER_FOLDER, MANIFEST, MARKER, MODS, ROOT, SCRIPT,
     RimstableError, USERDATA, USERDATA_SKIP, WINDOWS, assert_dest, changed_mods, desktop_dir, die,
-    diff_report, ensure_repo, game_info, install_helper, label_of, launch_hint, load_manifest, mod_record,
+    diff_report, ensure_repo, game_info, held_mods, install_helper, keep_hold, label_of, launch_hint, load_manifest,
+    mod_record,
     read_modsconfig, remove_mod_dir, require_not_running, require_same_version, require_steam_idle, resolve_active,
     restic, rimworld_pids, save_manifest, shortcut_name, snap_path, snapshot, snapshots, steam_mods, sync_into,
     workshop_times, write_shortcut,
@@ -31,14 +32,23 @@ def cmd_freeze(a):
 
     cfg = read_modsconfig(CFG_SRC)
     mods, missing = resolve_active(cfg["active"])
-    # a mod missing from Steam keeps its stable copy (and manifest record) instead of being removed
     old = {} if first else {r["packageId"]: r for r in load_manifest()["mods"]}
-    kept = [old[p] for p in missing if p in old and (MODS / old[p]["folder"]).is_dir()]
+    # a held mod keeps its stable copy and manifest record, whether Steam has it active or not
+    held = [r for r in old.values() if r.get("hold") and (MODS / r["folder"]).is_dir()]
+    held_ids = {r["packageId"] for r in held}
+    mods = [m for m in mods if m["packageId"] not in held_ids]
+    # a mod missing from Steam keeps its stable copy (and manifest record) instead of being removed
+    kept = [old[p] for p in missing if p in old and p not in held_ids and (MODS / old[p]["folder"]).is_dir()]
     if missing:
-        kept_ids = {r["packageId"] for r in kept}
+        kept_ids = {r["packageId"] for r in kept} | held_ids
         print("warning: active mods not found on disk (unsubscribed? still downloading?):")
         for p in missing:
             print(f"  {p}  ({'keeping the stable copy' if p in kept_ids else 'skipped'})")
+    if held:
+        print(f"keeping {len(held)} held mods as they are:")
+        for r in sorted(held, key=lambda r: r["name"].lower()):
+            note = "" if r["packageId"] in cfg["active"] else "  (not active in Steam, so inactive after the freeze)"
+            print(f"  {r['folder']}  {r['name']}{note}")
 
     ROOT.mkdir(parents=True, exist_ok=True)
     MARKER.touch()
@@ -50,7 +60,7 @@ def cmd_freeze(a):
     MODS.mkdir(exist_ok=True)
 
     print(f"[mods] {len(mods)} mods -> {MODS}")
-    keep = {HELPER_FOLDER} | {r["folder"] for r in kept}
+    keep = {HELPER_FOLDER} | {r["folder"] for r in kept + held}
     for mod in mods:
         folder = Path(mod["dir"]).name
         keep.add(folder)
@@ -82,7 +92,7 @@ def cmd_freeze(a):
         "frozen_at": dt.datetime.now().isoformat(timespec="seconds"),
         "game": game_info(GAME_SRC, CFG_SRC),
         "active": cfg["active"],
-        "mods": [mod_record(m, times) for m in mods] + kept,
+        "mods": [keep_hold(mod_record(m, times), old.get(m["packageId"])) for m in mods] + kept + held,
     })
     snapshot(" ".join(a.label) or ("first freeze" if first else "refreeze"))
     print(f"frozen: {len(mods)} mods, game {game_info(GAME_SRC, CFG_SRC)['revision']}")
@@ -106,6 +116,41 @@ def find_mod(query, records):
     return [r for r in records if q in r["name"].lower() or q in r["packageId"]]
 
 
+def stable_mod(query, man):
+    """The one stable mod (manifest record) that query names."""
+    hits = find_mod(query, man["mods"])
+    if len(hits) != 1:
+        die(f"'{query}' matches {len(hits)} mods in the stable copy" +
+            ("".join(f"\n  {h['folder']}  {h['packageId']}  {h['name']}" for h in hits[:20])))
+    return hits[0]
+
+
+def hold_text(r):
+    h = r["hold"]
+    return f"held since {h['at'][:10]}" + (f": {h['reason']}" if h.get("reason") else "")
+
+
+def cmd_hold(a):
+    man = load_manifest()
+    r = stable_mod(a.mod, man)
+    reason = " ".join(a.reason).strip() or (r.get("hold") or {}).get("reason", "")
+    r["hold"] = {"reason": reason, "at": dt.datetime.now().isoformat(timespec="seconds")}
+    save_manifest(man)
+    print(f"holding {r['name']} ({r['packageId']}): pull, Update all and freeze leave its stable copy alone"
+          + (f"\nreason: {reason}" if reason else ""))
+
+
+def cmd_unhold(a):
+    man = load_manifest()
+    r = stable_mod(a.mod, man)
+    if not r.get("hold"):
+        print(f"{r['name']} ({r['packageId']}) isn't held")
+        return
+    del r["hold"]
+    save_manifest(man)
+    print(f"released {r['name']} ({r['packageId']}); pull and freeze update it from Steam again")
+
+
 def cmd_pull(a):
     require_not_running()
     require_steam_idle(a.force)
@@ -120,6 +165,10 @@ def cmd_pull(a):
             ("".join(f"\n  {h['folder']}  {h['packageId']}  {h['name']}" for h in hits[:20])))
     pid = hits[0]["packageId"]
     src = dict(ws[pid], packageId=pid)
+    old = next((r for r in man["mods"] if r["packageId"] == pid), None)
+    if old and old.get("hold") and not a.held:
+        die(f"{src['name']} ({pid}) is {hold_text(old)}\n"
+            f"'rimstable unhold {old['folder']}' releases it; add -held to pull it once and keep the hold")
     probs = modver.pull_problems(src, man)
     if probs and not a.anyversion:
         die(f"{src['name']} ({pid}) won't work on the stable copy's RimWorld {man['game']['version_txt']}:\n  "
@@ -129,10 +178,10 @@ def cmd_pull(a):
     sync_into(src["dir"], dst, exclude=dds.sync_exclude(src["dir"], dst))
     if dds.enabled(dds.STABLE):
         dds.convert(dds.STABLE, [dst])
-    rec = mod_record(src, workshop_times())
+    rec = keep_hold(mod_record(src, workshop_times()), old)
     man["mods"] = [r for r in man["mods"] if r["packageId"] != pid] + [rec]
     save_manifest(man)
-    print(f"pulled {src['name']} ({pid})")
+    print(f"pulled {src['name']} ({pid})" + (", still held" if rec.get("hold") else ""))
     active = read_modsconfig(USERDATA)["active"]
     if pid not in active:
         print("note: this mod is not active in the stable install; enable it in the in-game mod manager")
@@ -140,7 +189,11 @@ def cmd_pull(a):
 
 def pull_all(man, ws, anyversion=False):
     """Update every stable mod that changed on Steam, after one snapshot. Mods new to Steam aren't added, and
-    updates that won't work on the stable copy's game version are skipped unless anyversion."""
+    updates that won't work on the stable copy's game version are skipped unless anyversion. Held mods are
+    never pulled here."""
+    held = sorted(r["name"] for r, _, ch in held_mods(man, ws) if ch)
+    if held:
+        print(f"skipping {len(held)} held mods that changed on Steam: " + ", ".join(held))
     changed = sorted(changed_mods(man, ws), key=lambda x: x[1]["name"].lower())
     if not changed:
         print("all stable mods match Steam; nothing to pull")
@@ -204,6 +257,13 @@ def cmd_diff(a):
         print(f"  {counts['loads']} change what {v} loads, {counts['other']} only other versions or metadata"
               + (f", {counts['blocked']} won't work on {v} (pull skips them; -anyversion overrides)"
                  if counts["blocked"] else ""))
+    if d["held"]:
+        print(f"\nheld mods (pull and freeze leave them alone; 'rimstable unhold MOD' releases one): "
+              f"{len(d['held'])}")
+        for r, cur, ch in sorted(d["held"], key=lambda x: x[0]["name"].lower()):
+            state = "Steam changed" if ch else "same as Steam" if cur else "not on Steam"
+            reason = r["hold"].get("reason")
+            print(f"  {r['folder']:>11}  {state:<13}  {r['name']}" + (f"  ({reason})" if reason else ""))
     if d["gone"]:
         print(f"\nmods no longer in Steam's Workshop or local Mods/ folder (unsubscribed/removed): {len(d['gone'])}")
         for r in d["gone"]:
@@ -266,6 +326,11 @@ def cmd_status(a):
     print(f"frozen   {man['frozen_at']}")
     print(f"game     {g['revision'] or g['version_txt']} (Steam build {g['buildid']})")
     print(f"mods     {len(man['mods'])} + core/DLC, {len(man['active'])} active at freeze")
+    held = sorted((r for r in man["mods"] if r.get("hold")), key=lambda r: r["name"].lower())
+    if held:
+        print(f"held     {len(held)}")
+        for r in held:
+            print(f"           {r['name']} ({r['folder']}), {hold_text(r)}")
     snaps = snapshots()
     if snaps:
         print(f"snaps    {len(snaps)}, latest {snaps[-1]['short_id']} {label_of(snaps[-1])}")
@@ -393,7 +458,19 @@ def build_parser():
     s.add_argument("-anyversion", action="store_true",
                    help="pull even mods whose Steam version won't work on the stable copy's game version "
                         "(About.xml doesn't list it, or a DLL is built for a newer .NET)")
+    s.add_argument("-held", action="store_true",
+                   help="pull the named mod even though it's held (it stays held)")
     s.set_defaults(fn=cmd_pull)
+
+    s = sub.add_parser("hold", help="keep a stable mod as it is: pull, Update all and freeze skip it")
+    s.add_argument("mod", help="packageId, Workshop id/folder, or part of the name of a mod in the stable copy")
+    s.add_argument("reason", nargs="*", metavar="REASON",
+                   help="why it's held, quoted or not (shown by diff, status and the GUI)")
+    s.set_defaults(fn=cmd_hold)
+
+    s = sub.add_parser("unhold", help="release a held mod, so pull and freeze update it from Steam again")
+    s.add_argument("mod", help="packageId, Workshop id/folder, or part of the name of a held mod")
+    s.set_defaults(fn=cmd_unhold)
 
     s = sub.add_parser("snap", help="take a snapshot")
     s.add_argument("label", nargs="*", metavar="LABEL", help="snapshot label, quoted or not (default: manual)")
