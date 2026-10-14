@@ -234,6 +234,10 @@ folder (2 GB to 4 GB here).
   DDS of that size and the texture would go missing, so those keep loading as PNG.
 - `clean` deletes the generated DDS. For all mods it also turns DDS off for that target.
 - `check` only reports counts (`dds check clean steam` reports what `dds clean steam` would delete).
+- Encoding only runs for a 1.6 game; for any other version (e.g. Steam's 1.7) `dds` and `dds check`
+  refuse and the GUI's Encode button is disabled. `clean` still works. 1.7 also prefers `Foo.dds`,
+  but it compresses PNGs itself (BC1/BC7, BC4/BC5) and caches the result on disk, so pre-encoding
+  saves little there, and whether todds' vertical flip is still right on 1.7 is untested.
 - `-force` skips the "Steam is mid-update" check.
 - The words go in that order, before any `MOD`. A mod folder literally named `check`, `clean`,
   `stable`, `steam` or `both` can't be given as a `MOD`; use its packageId.

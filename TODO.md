@@ -65,9 +65,13 @@ Everything rimstable does today assumes Unity-era 1.6. The 1.7 copy would live a
 - [ ] **Pull checks for a 1.7 copy.** `modver` follows 1.6's load-folder rules; verify them against
       1.7's code. Find out what 1.7 does with a net472 DLL (loads it, or not) so pull blocks the
       right mods on a 1.7 copy.
-- [ ] **DDS on 1.7.** Unverified whether 1.7 (Waylith) uses a `.dds` next to the `.png`, and whether
-      todds' `-vf` flip (a Unity quirk) is still right. Test on one mod; until then, leave DDS off for
-      a 1.7 copy (refuse `dds` there).
+- [x] **DDS on 1.7: off.** Decompiled 1.7.4977: `ModContentLoader.ShadowedByDds` still loads `Foo.dds`
+      instead of `Foo.png`, but 1.7 encodes PNGs itself (BC1/BC7, BC4 for single-channel, BC5 normals) into
+      a disk texture cache (`GpuTextureService`, `TextureCache/v23`), so pre-encoding saves little after the
+      first start. DDS-loaded textures are cached and evictable too, so the forum claim that DDS raise VRAM
+      on 1.7 isn't obvious from the code (not measured). `dds` refuses to encode for any game that isn't
+      1.6 (`dds.DDS_VERSIONS`); `clean` still works. Revisit only with a measured start-time or VRAM win,
+      and check todds' `-vf` flip on one mod first.
 - [ ] **Choosing the copy.** CLI: a `-root DIR` option (or keep `RIMSTABLE_ROOT`); GUI: show which
       copy is open and switch between known copies. Shortcuts need distinct names per copy, e.g.
       "RimWorld 1.6 (Stable)" / "RimWorld 1.7 (Stable)".

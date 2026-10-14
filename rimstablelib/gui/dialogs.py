@@ -214,7 +214,7 @@ class DdsDialog(Dialog):
     def _update(self, *_):
         t = theme.current
         clean = self.clean.isChecked()
-        lines, work = [], 0
+        lines, work, blocked = [], 0, False
         for name in self._targets():
             s = self.info.get(name)
             title = dict(self.TARGETS)[name]
@@ -226,6 +226,10 @@ class DdsDialog(Dialog):
                 work += n
                 lines.append(f"<b>{title}</b>: deletes {n:,} generated DDS" if n else
                              f"<b>{title}</b>: <span style='color:{t['muted']}'>nothing to remove</span>")
+            elif s.get("blocked"):
+                blocked = True
+                lines.append(f"<b>{title}</b>: <span style='color:{t['muted']}'>won't encode: "
+                             f"{s['blocked']}</span>")
             else:
                 work += s["todo"]
                 parts = [f"{s['todo']:,} PNGs to encode" + (f" ({s['stale']:,} changed)" if s["stale"] else "")
@@ -244,7 +248,8 @@ class DdsDialog(Dialog):
             lines.append(f"Takes about {round(work / self.RATE / 60)} min; the mods folder grows by roughly the "
                          "size of its PNGs.")
         self.summary.setText("<br>".join(lines))
-        self.ok.setEnabled(bool(work) or not clean)  # an encode run with nothing to do still turns DDS on
+        # an encode run with nothing to do still turns DDS on
+        self.ok.setEnabled(bool(work) if clean else not blocked)
         self.force.setVisible("steam" in self._targets() and not clean)
         set_prop(self.ok, "kind", "danger" if clean else "primary")
         self.ok.setText("Remove DDS" if clean else "Encode")

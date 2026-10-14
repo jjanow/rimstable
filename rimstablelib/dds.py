@@ -17,25 +17,28 @@ import tempfile
 from pathlib import Path
 
 from .core import (
-    APP_DIR, CFG_SRC, GAME_SRC, MARKER, MODS, ROOT, STEAMAPPS, WINDOWS, WS_SRC, assert_dest, die, read_about,
-    read_modsconfig, remove_path, resolve_active,
+    APP_DIR, CFG_SRC, GAME, GAME_SRC, MARKER, MODS, ROOT, STEAMAPPS, WINDOWS, WS_SRC, assert_dest, die, major_minor,
+    read_about, read_modsconfig, read_text, remove_path, resolve_active,
 )
 
 # BC1 for opaque textures, BC7 where there's alpha; Unity reads DDS bottom-up, hence the vertical flip
 TODDS_ARGS = ["-f", "BC1", "-af", "BC7", "-vf", "-t"]
+# 1.7 (Waylith) still prefers a .dds over its .png, but encodes PNGs itself (BC1/BC7/BC4/BC5) into a disk cache,
+# so pre-encoding no longer saves much there, and whether -vf is still right is untested
+DDS_VERSIONS = {"1.6"}
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
 class Target:
-    def __init__(self, name, base, ledger, roots):
-        self.name, self.base, self.ledger, self.roots = name, base, ledger, roots
+    def __init__(self, name, base, ledger, roots, game):
+        self.name, self.base, self.ledger, self.roots, self.game = name, base, ledger, roots, game
 
     def key(self, p):
         return Path(p).relative_to(self.base).as_posix()
 
 
-STABLE = Target("stable", MODS, MODS / ".rimstable-dds.json", [MODS])
-STEAM = Target("steam", STEAMAPPS, ROOT / "dds-steam.json", [WS_SRC, GAME_SRC / "Mods"])
+STABLE = Target("stable", MODS, MODS / ".rimstable-dds.json", [MODS], GAME)
+STEAM = Target("steam", STEAMAPPS, ROOT / "dds-steam.json", [WS_SRC, GAME_SRC / "Mods"], GAME_SRC)
 TARGETS = {"stable": [STABLE], "steam": [STEAM], "both": [STABLE, STEAM]}
 
 _cache = {}
@@ -222,7 +225,25 @@ def plan(t, files, moddirs):
     return stale, gone, todo, badsize
 
 
+def encode_problem(t):
+    """Why rimstable won't encode for this target's game (None when it will)."""
+    try:
+        v = major_minor(read_text(t.game / "Version.txt"))
+    except OSError:
+        v = None
+    if v not in DDS_VERSIONS:
+        return (f"its game is RimWorld {v or 'unknown'}, and rimstable only encodes for "
+                f"{', '.join(sorted(DDS_VERSIONS))} (1.7 compresses and caches PNGs itself)")
+
+
+def require_encodable(t):
+    problem = encode_problem(t)
+    if problem:
+        die(f"refusing to encode DDS for {t.name}: {problem}. 'dds clean {t.name}' still removes DDS rimstable made.")
+
+
 def convert(t, moddirs=None, dry_run=False):
+    require_encodable(t)
     files = load(t)
     if moddirs is None:
         moddirs = mod_dirs(t)
@@ -309,7 +330,7 @@ def summary(t):
         files = adopt(mod_dirs(t), quiet=True) if t is STABLE else {}
     stale, gone, todo, badsize = plan(t, files, mod_dirs(t))
     return {"enabled": on, "recorded": len(files) - len(gone), "todo": len(todo), "stale": len(stale),
-            "badsize": badsize}
+            "badsize": badsize, "blocked": encode_problem(t)}
 
 
 def status_line():
