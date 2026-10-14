@@ -13,7 +13,7 @@ from . import core, dds, modver
 from .core import (
     APP_DIR, CFG_SRC, EXE_NAME, GAME, GAME_SRC, HELPER_FOLDER, MANIFEST, MARKER, MODS, ROOT, SCRIPT,
     RimstableError, USERDATA, USERDATA_SKIP, WINDOWS, assert_dest, changed_mods, desktop_dir, die,
-    diff_report, ensure_repo, game_info, held_mods, install_helper, keep_hold, label_of, launch_hint, load_manifest,
+    deactivate, diff_report, ensure_repo, game_info, held_mods, install_helper, keep_hold, label_of, launch_hint, load_manifest,
     mod_record,
     read_modsconfig, remove_mod_dir, require_not_running, require_same_version, require_steam_idle, resolve_active,
     restic, rimworld_pids, save_manifest, shortcut_name, snap_path, snapshot, snapshots, steam_mods, sync_into,
@@ -171,6 +171,25 @@ def cmd_unhold(a):
     del r["hold"]
     save_manifest(man)
     print(f"released {r['name']} ({r['packageId']}); pull and freeze update it from Steam again")
+
+
+
+def cmd_remove(a):
+    require_not_running()
+    man = load_manifest()
+    r = stable_mod(a.mod, man)
+    pid = r["packageId"]
+    snapshot(f"pre-remove {r['name']}")
+    d = MODS / r["folder"]
+    if d.is_dir():
+        remove_mod_dir(d)
+    man["mods"] = [m for m in man["mods"] if m["packageId"] != pid]
+    man["active"] = [p for p in man["active"] if p.lower() != pid.lower()]
+    save_manifest(man)
+    off = deactivate(pid)
+    print(f"removed {r['name']} ({pid}) from the stable copy" + (" and its active mods" if off else ""))
+    if not r.get("hold"):
+        print("note: it wasn't held, so freeze puts it back while Steam has it active")
 
 
 def cmd_pull(a):
@@ -520,6 +539,11 @@ def build_parser():
     s.add_argument("mod", nargs="?", help="packageId, Workshop id/folder, or part of the name of a held mod")
     s.add_argument("-all", action="store_true", help="release every held mod")
     s.set_defaults(fn=cmd_unhold)
+
+    s = sub.add_parser("remove", help="delete a mod from the stable copy: its folder, manifest record and "
+                                      "activation (snapshots first)")
+    s.add_argument("mod", help="packageId, Workshop id/folder, or part of the name of a mod in the stable copy")
+    s.set_defaults(fn=cmd_remove)
 
     s = sub.add_parser("snap", help="take a snapshot")
     s.add_argument("label", nargs="*", metavar="LABEL", help="snapshot label, quoted or not (default: manual)")

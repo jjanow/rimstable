@@ -73,6 +73,7 @@ Run with no arguments, or `-h` after any command (`rimstable prune -h`), for bui
 | `diff [-held]` | show what changed on Steam since the last freeze |
 | `pull [mod]` | update every changed mod from Steam, or just the named one |
 | `hold <mod> [reason]` / `unhold <mod>` | keep a stable mod as it is, or release it |
+| `remove <mod>` | delete a mod from the stable copy |
 | `snap` | take a snapshot |
 | `list` | list snapshots |
 | `restore <id>` | roll the stable copy back to a snapshot |
@@ -166,6 +167,13 @@ already held keep their reason. A single mod can still be updated on purpose wit
 `unhold -all` releases every held mod.
 
 Holds live in `manifest.json` and take no snapshot. `restore` puts back the holds the snapshot had.
+
+### `remove <mod>`
+
+Deletes a mod from the stable copy, after a snapshot: its folder in `Mods/`, its manifest record and its
+line in the stable `ModsConfig.xml` active list. This is how a held mod leaves the stable copy (e.g. after
+unsubscribing on Steam), since `freeze` keeps held mods and mods missing from Steam. `<mod>` matches like
+`hold`. A mod that wasn't held comes back on the next `freeze` while Steam still has it active.
 
 ### `snap [LABEL]`
 

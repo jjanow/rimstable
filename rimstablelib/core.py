@@ -148,6 +148,22 @@ def install_helper():
     print(f"[helper] activated {HELPER_ID}")
 
 
+
+def deactivate(pid):
+    """Drop pid from the stable ModsConfig.xml's active mods. True if it was there."""
+    cfg = USERDATA / "Config/ModsConfig.xml"
+    if not cfg.exists():
+        return False
+    raw = cfg.read_bytes()
+    bom = raw.startswith(b"\xef\xbb\xbf")
+    text = raw.decode("utf-8-sig")
+    text, n = re.subn(rf"^[ \t]*<li>\s*{re.escape(pid)}\s*</li>[ \t]*\r?\n", "", text, flags=re.M | re.I)
+    if n:
+        assert_dest(cfg)
+        cfg.write_bytes((b"\xef\xbb\xbf" if bom else b"") + text.encode("utf-8"))
+    return bool(n)
+
+
 # ---------- safety ----------
 
 def inside_root(p):

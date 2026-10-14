@@ -16,7 +16,8 @@ from .widgets import Banner, Pill, button, label, refresh_icons
 NAV = [("overview", "Overview"), ("mods", "Mods"), ("snapshots", "Snapshots"), ("activity", "Activity")]
 TITLES = {"freeze": "Freezing", "pull": "Pulling", "snap": "Taking a snapshot", "restore": "Restoring",
           "prune": "Pruning snapshots", "userdata": "Replacing config and saves", "shortcut": "Creating a shortcut",
-          "dds": "Encoding textures", "hold": "Holding a mod", "unhold": "Releasing a held mod"}
+          "dds": "Encoding textures", "hold": "Holding a mod", "unhold": "Releasing a held mod",
+          "remove": "Removing a mod"}
 
 
 def steam_problem():
